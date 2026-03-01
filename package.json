@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Node.js + Express backend with MongoDB (Mongoose)",
   "main": "src/index.js",
+  "engines": {
+    "node": "18.x",
+    "npm": "9.x"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"

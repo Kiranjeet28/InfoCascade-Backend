@@ -1,3 +1,25 @@
+// Controller for student forget password
+exports.forgetPassword = async (req, res, next) => {
+  try {
+    const { identifier, newPassword } = req.body; // identifier can be urn or crn
+    if (!identifier || !newPassword) {
+      return res.status(400).json({ error: 'identifier and newPassword required' });
+    }
+
+    const student = await Student.findOne({ $or: [{ urn: identifier }, { crn: identifier }] });
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    student.password = hashed;
+    await student.save();
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    next(err);
+  }
+};
 const Student = require('../models/studentModel');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -65,6 +87,30 @@ exports.sign = async (req, res, next) => {
         verified: student.verified
       }
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.updateStudent = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const updateData = { ...req.body };
+    // Prevent updating sensitive fields directly
+    delete updateData.password;
+    delete updateData.AcedminPassword;
+    // Optionally, handle password update separately if needed
+
+    const updatedStudent = await Student.findOneAndUpdate(
+      { id },
+      updateData,
+      { new: true, runValidators: true, context: 'query' }
+    ).select('-password -AcedminPassword -__v -_id');
+
+    if (!updatedStudent) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    res.json({ message: 'Student updated', student: updatedStudent });
   } catch (err) {
     next(err);
   }
