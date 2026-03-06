@@ -92,6 +92,36 @@ exports.sign = async (req, res, next) => {
   }
 };
 
+// Get student details by URN and password
+exports.getByUrn = async (req, res, next) => {
+  try {
+    const { urn, password } = req.body;
+    if (!urn || !password) return res.status(400).json({ success: false, error: 'urn and password required' });
+
+    const student = await Student.findOne({ urn });
+    if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
+
+    const ok = await bcrypt.compare(password, student.password);
+    if (!ok) return res.status(400).json({ success: false, error: 'Invalid credentials' });
+
+    // Prepare safe student object
+    const safeStudent = {
+      id: student.id,
+      name: student.name,
+      urn: student.urn,
+      crn: student.crn,
+      department: student.department,
+      group: student.group,
+      verified: student.verified,
+      createdAt: student.createdAt
+    };
+
+    res.json({ success: true, student: safeStudent });
+  } catch (err) {
+    next(err);
+  }
+};
+
 exports.updateStudent = async (req, res, next) => {
   try {
     const { id } = req.params;
