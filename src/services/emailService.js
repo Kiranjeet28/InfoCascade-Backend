@@ -1,30 +1,39 @@
 /**
  * Email Service – sends OTP emails.
  *
- * Strategy (auto-detected from env vars):
- *   1. RESEND_API_KEY set  → use Resend HTTP API (works on Render, recommended)
- *   2. Otherwise           → use Nodemailer SMTP (works locally, blocked on Render free tier)
+ * Strategy (auto-detected from env vars, first match wins):
+ *   1. BREVO_API_KEY  → Brevo HTTP API (free 300/day, sends to ANY email, works on Render)
+ *   2. RESEND_API_KEY → Resend HTTP API (needs verified domain for non-self emails)
+ *   3. Fallback       → Nodemailer SMTP (works locally, blocked on Render free tier)
  *
- * Both paths include timeouts so the endpoint NEVER hangs.
+ * All paths include timeouts so the endpoint NEVER hangs.
  */
 
 const nodemailer = require('nodemailer');
 
 const EMAIL_SEND_TIMEOUT = parseInt(process.env.EMAIL_SEND_TIMEOUT, 10) || 20000; // 20s
 
-/* ---------- Resend (HTTP-based, works on Render) ---------- */
+/* ---------- Provider detection ---------- */
 
-let resendClient = null;
+let emailProvider = 'smtp'; // default
 
-if (process.env.RESEND_API_KEY) {
-  const { Resend } = require('resend');
-  resendClient = new Resend(process.env.RESEND_API_KEY);
+if (process.env.BREVO_API_KEY) {
+  emailProvider = 'brevo';
+  console.log('[Email] Using Brevo HTTP API');
+} else if (process.env.RESEND_API_KEY) {
+  emailProvider = 'resend';
   console.log('[Email] Using Resend HTTP API');
 } else {
-  console.log('[Email] Using Nodemailer SMTP (set RESEND_API_KEY for production)');
+  console.log('[Email] Using Nodemailer SMTP (set BREVO_API_KEY for production)');
 }
 
-/* ---------- Nodemailer SMTP (local dev / fallback) ---------- */
+/* ---------- Resend client (lazy) ---------- */
+
+let resendClient = null;
+if (emailProvider === 'resend') {
+  const { Resend } = require('resend');
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+}
 
 /* ---------- Nodemailer SMTP (local dev / fallback) ---------- */
 
@@ -33,18 +42,49 @@ const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '46
 const transportConfig = {
   host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
   port: smtpPort,
-  secure: smtpPort === 465, // true for 465 (SSL), false for 587 (STARTTLS)
+  secure: smtpPort === 465,
   auth: {
     user: process.env.SMTP_USER || process.env.EMAIL_USER,
     pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
   },
-  // CRITICAL: Timeouts so SMTP never hangs on Render
-  connectionTimeout: 10000,  // 10s to establish TCP connection
-  greetingTimeout: 10000,    // 10s for SMTP greeting
-  socketTimeout: 15000,      // 15s for socket inactivity
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 };
 
 const transporter = nodemailer.createTransport(transportConfig);
+
+/* ---------- Brevo HTTP API helper (no npm package needed) ---------- */
+
+async function sendViaBrevo(to, subject, html, text) {
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || process.env.SMTP_USER;
+  const senderName  = process.env.BREVO_SENDER_NAME  || 'InfoCascade';
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+      textContent: text,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(`Brevo API error ${response.status}: ${data.message || JSON.stringify(data)}`);
+  }
+
+  console.log(`[Email] OTP sent via Brevo to ${to} (messageId: ${data.messageId})`);
+  return data;
+}
 
 /**
  * Builds a styled HTML email body matching the existing frontend template.
@@ -116,7 +156,10 @@ async function sendOtpEmail(to, otp) {
 
   let emailPromise;
 
-  if (resendClient) {
+  if (emailProvider === 'brevo') {
+    // ── Brevo HTTP API (works on Render, sends to ANY recipient) ──
+    emailPromise = sendViaBrevo(to, subject, html, text);
+  } else if (emailProvider === 'resend' && resendClient) {
     // ── Resend (HTTP API) ──
     emailPromise = resendClient.emails.send({
       from: process.env.RESEND_FROM || 'InfoCascade <onboarding@resend.dev>',
@@ -130,7 +173,7 @@ async function sendOtpEmail(to, otp) {
       return data;
     });
   } else {
-    // ── Nodemailer SMTP ──
+    // ── Nodemailer SMTP (local dev) ──
     emailPromise = transporter.sendMail({ from, to, subject, html, text })
       .then((info) => {
         console.log(`[Email] OTP sent via SMTP to ${to} (messageId: ${info.messageId})`);
