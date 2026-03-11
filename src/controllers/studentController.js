@@ -32,7 +32,20 @@ exports.register = async (req, res, next) => {
     });
 
     await student.save();
-    res.status(201).json({ message: 'Student registered', studentId: student._id });
+    res.status(201).json({
+      success: true,
+      message: 'Student registered',
+      student: {
+        _id: student._id,
+        name: student.name,
+        email: student.email,
+        urn: student.urn,
+        crn: student.crn,
+        department: student.department,
+        semester: student.semester,
+        group: student.group,
+      },
+    });
   } catch (err) {
     if (err.code === 11000) {
       const field = Object.keys(err.keyPattern)[0];
@@ -170,7 +183,7 @@ exports.forgetPassword = async (req, res, next) => {
     student.password = hashed;
     await student.save();
 
-    res.json({ message: 'Password updated successfully' });
+    res.json({ success: true, message: 'Password updated successfully' });
   } catch (err) {
     next(err);
   }

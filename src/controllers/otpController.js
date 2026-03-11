@@ -50,7 +50,17 @@ exports.send = async (req, res, next) => {
     await otpStore.saveOtp(email, hashed);
     await otpStore.incrementSendCount(email);
 
-    await sendOtpEmail(email, otp);
+    try {
+      await sendOtpEmail(email, otp);
+    } catch (emailErr) {
+      console.error(`[OTP] Email send failed for ${email}:`, emailErr.message);
+      // Clean up stored OTP since email didn't go out
+      await otpStore.deleteOtp(email).catch(() => {});
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send OTP email. Please try again later.',
+      });
+    }
 
     console.log(`[OTP] OTP sent to ${email} (send #${sendCount + 1})`);
 
@@ -60,7 +70,10 @@ exports.send = async (req, res, next) => {
     });
   } catch (err) {
     console.error('[OTP] send error:', err.message);
-    next(err);
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong. Please try again.',
+    });
   }
 };
 
@@ -96,7 +109,16 @@ exports.resend = async (req, res, next) => {
     await otpStore.saveOtp(email, hashed);
     await otpStore.incrementResendCount(email);
 
-    await sendOtpEmail(email, otp);
+    try {
+      await sendOtpEmail(email, otp);
+    } catch (emailErr) {
+      console.error(`[OTP] Resend email failed for ${email}:`, emailErr.message);
+      await otpStore.deleteOtp(email).catch(() => {});
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send OTP email. Please try again later.',
+      });
+    }
 
     console.log(`[OTP] OTP re-sent to ${email} (resend #${resendCount + 1})`);
 
@@ -106,7 +128,10 @@ exports.resend = async (req, res, next) => {
     });
   } catch (err) {
     console.error('[OTP] resend error:', err.message);
-    next(err);
+    return res.status(500).json({
+      success: false,
+      message: 'Something went wrong. Please try again.',
+    });
   }
 };
 
@@ -173,6 +198,9 @@ exports.verify = async (req, res, next) => {
     });
   } catch (err) {
     console.error('[OTP] verify error:', err.message);
-    next(err);
+    return res.status(500).json({
+      success: false,
+      message: 'Verification failed. Please try again.',
+    });
   }
 };

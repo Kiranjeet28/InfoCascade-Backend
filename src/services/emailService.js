@@ -1,13 +1,30 @@
 /**
- * Email Service – sends OTP emails via Nodemailer (SMTP).
+ * Email Service – sends OTP emails.
  *
- * Supports environment variables:
- *   SMTP_HOST / EMAIL_HOST, SMTP_PORT / EMAIL_PORT,
- *   SMTP_USER / EMAIL_USER, SMTP_PASS / EMAIL_PASS,
- *   EMAIL_FROM
+ * Strategy (auto-detected from env vars):
+ *   1. RESEND_API_KEY set  → use Resend HTTP API (works on Render, recommended)
+ *   2. Otherwise           → use Nodemailer SMTP (works locally, blocked on Render free tier)
+ *
+ * Both paths include timeouts so the endpoint NEVER hangs.
  */
 
 const nodemailer = require('nodemailer');
+
+const EMAIL_SEND_TIMEOUT = parseInt(process.env.EMAIL_SEND_TIMEOUT, 10) || 20000; // 20s
+
+/* ---------- Resend (HTTP-based, works on Render) ---------- */
+
+let resendClient = null;
+
+if (process.env.RESEND_API_KEY) {
+  const { Resend } = require('resend');
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+  console.log('[Email] Using Resend HTTP API');
+} else {
+  console.log('[Email] Using Nodemailer SMTP (set RESEND_API_KEY for production)');
+}
+
+/* ---------- Nodemailer SMTP (local dev / fallback) ---------- */
 
 const transportConfig = {
   host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
@@ -17,6 +34,10 @@ const transportConfig = {
     user: process.env.SMTP_USER || process.env.EMAIL_USER,
     pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
   },
+  // CRITICAL: Timeouts so SMTP never hangs on Render
+  connectionTimeout: 10000,  // 10s to establish TCP connection
+  greetingTimeout: 10000,    // 10s for SMTP greeting
+  socketTimeout: 15000,      // 15s for socket inactivity
 };
 
 const transporter = nodemailer.createTransport(transportConfig);
@@ -72,25 +93,48 @@ function buildOtpHtml(otp) {
 }
 
 /**
- * Send an OTP email.
+ * Send an OTP email – auto-selects Resend or Nodemailer.
+ * Always wrapped in a timeout so the request NEVER hangs.
+ *
  * @param {string} to   - recipient email address
  * @param {string} otp  - the 6-digit OTP (plaintext, for the email body)
  */
 async function sendOtpEmail(to, otp) {
   const from = process.env.EMAIL_FROM || `"InfoCascade" <${transportConfig.auth.user}>`;
+  const subject = 'Your InfoCascade Verification Code';
+  const html = buildOtpHtml(otp);
+  const text = `Your InfoCascade verification code is: ${otp}\n\nThis code expires in 5 minutes. If you did not request this, please ignore this email.`;
 
-  const mailOptions = {
-    from,
-    to,
-    subject: 'Your InfoCascade Verification Code',
-    html: buildOtpHtml(otp),
-    text: `Your InfoCascade verification code is: ${otp}\n\nThis code expires in 5 minutes. If you did not request this, please ignore this email.`,
-  };
+  // Wrap in a timeout so it NEVER hangs
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Email send timed out after ' + EMAIL_SEND_TIMEOUT + 'ms')), EMAIL_SEND_TIMEOUT)
+  );
 
-  const info = await transporter.sendMail(mailOptions);
-  // Audit log – never log the OTP itself
-  console.log(`[Email] OTP email sent to ${to} (messageId: ${info.messageId})`);
-  return info;
+  let emailPromise;
+
+  if (resendClient) {
+    // ── Resend (HTTP API) ──
+    emailPromise = resendClient.emails.send({
+      from: process.env.RESEND_FROM || 'InfoCascade <onboarding@resend.dev>',
+      to,
+      subject,
+      html,
+      text,
+    }).then(({ data, error }) => {
+      if (error) throw new Error(error.message);
+      console.log(`[Email] OTP sent via Resend to ${to} (id: ${data.id})`);
+      return data;
+    });
+  } else {
+    // ── Nodemailer SMTP ──
+    emailPromise = transporter.sendMail({ from, to, subject, html, text })
+      .then((info) => {
+        console.log(`[Email] OTP sent via SMTP to ${to} (messageId: ${info.messageId})`);
+        return info;
+      });
+  }
+
+  return Promise.race([emailPromise, timeoutPromise]);
 }
 
 module.exports = { sendOtpEmail, buildOtpHtml };

@@ -27,3 +27,9 @@ services:
         sync: false
       - key: CORS_ORIGIN
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
