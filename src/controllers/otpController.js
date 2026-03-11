@@ -12,12 +12,20 @@ const { generateOtp, hashOtp, verifyOtp, isValidEmail } = require('../utils/otp'
 const otpStore = require('../services/otpStore');
 const { sendOtpEmail } = require('../services/emailService');
 
+/**
+ * Extract email from request body.
+ * Accepts both { email: "..." } (new) and { to: "..." } (legacy frontend).
+ */
+function extractEmail(body) {
+  return (body.email || body.to || '').trim().toLowerCase();
+}
+
 /* ------------------------------------------------------------------ */
 /*  POST /api/otp/send                                                */
 /* ------------------------------------------------------------------ */
 exports.send = async (req, res, next) => {
   try {
-    const email = (req.body.email || '').trim().toLowerCase();
+    const email = extractEmail(req.body);
 
     if (!isValidEmail(email)) {
       return res.status(400).json({
@@ -61,7 +69,7 @@ exports.send = async (req, res, next) => {
 /* ------------------------------------------------------------------ */
 exports.resend = async (req, res, next) => {
   try {
-    const email = (req.body.email || '').trim().toLowerCase();
+    const email = extractEmail(req.body);
 
     if (!isValidEmail(email)) {
       return res.status(400).json({
@@ -107,8 +115,8 @@ exports.resend = async (req, res, next) => {
 /* ------------------------------------------------------------------ */
 exports.verify = async (req, res, next) => {
   try {
-    const email = (req.body.email || '').trim().toLowerCase();
-    const otp   = (req.body.otp   || '').trim();
+    const email = extractEmail(req.body);
+    const otp   = (req.body.otp || '').trim();
 
     if (!isValidEmail(email)) {
       return res.status(400).json({
