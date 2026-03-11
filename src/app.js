@@ -5,6 +5,9 @@ const routes = require('./routes');
 
 const app = express();
 
+// Trust Render's reverse proxy (required for rate-limiting & req.ip)
+app.set('trust proxy', 1);
+
 // Environment-specific logging
 const morganFormat = process.env.NODE_ENV === 'production' ? 'combined' : 'dev';
 app.use(morgan(morganFormat));

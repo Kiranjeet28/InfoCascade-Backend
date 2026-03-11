@@ -1,18 +1,21 @@
-FROM node:18-slim
+FROM node:22-slim
 
-# Create app directory
 WORKDIR /usr/src/app
 
-# Install app dependencies
-COPY package.json ./
-RUN npm install --production
+# Install dependencies first (Docker layer cache)
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev || npm install --omit=dev
 
-# Bundle app source
-COPY . .
+# Copy source
+COPY config/ ./config/
+COPY src/ ./src/
 
 ENV NODE_ENV=production
-ENV PORT=5000
+ENV PORT=10000
 
-EXPOSE 5000
+EXPOSE 10000
 
-CMD ["npm", "start"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD node -e "const http=require('http');http.get('http://localhost:'+process.env.PORT+'/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
+
+CMD ["node", "src/index.js"]
