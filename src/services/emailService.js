@@ -26,10 +26,14 @@ if (process.env.RESEND_API_KEY) {
 
 /* ---------- Nodemailer SMTP (local dev / fallback) ---------- */
 
+/* ---------- Nodemailer SMTP (local dev / fallback) ---------- */
+
+const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '465', 10);
+
 const transportConfig = {
   host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '587', 10),
-  secure: false, // STARTTLS
+  port: smtpPort,
+  secure: smtpPort === 465, // true for 465 (SSL), false for 587 (STARTTLS)
   auth: {
     user: process.env.SMTP_USER || process.env.EMAIL_USER,
     pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
