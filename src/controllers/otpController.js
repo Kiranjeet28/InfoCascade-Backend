@@ -30,7 +30,7 @@ exports.send = async (req, res, next) => {
     if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid email. Must be a valid @gndec.ac.in address.',
+        message: 'Invalid email. Must be a valid @gmail.com address.',
       });
     }
 
@@ -90,7 +90,7 @@ exports.resend = async (req, res, next) => {
     if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid email. Must be a valid @gndec.ac.in address.',
+        message: 'Invalid email. Must be a valid @gmail.com address.',
       });
     }
 
@@ -152,7 +152,7 @@ exports.verify = async (req, res, next) => {
     if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid email. Must be a valid @gndec.ac.in address.',
+        message: 'Invalid email. Must be a valid @gmail.com address.',
       });
     }
 

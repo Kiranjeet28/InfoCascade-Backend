@@ -51,13 +51,13 @@ function verifyOtp(candidateOtp, storedHash) {
 }
 
 /**
- * Validate that an email address belongs to @gndec.ac.in.
+ * Validate that an email address belongs to @gmail.com.
  * @param {string} email
  * @returns {boolean}
  */
 function isValidEmail(email) {
   if (!email || typeof email !== 'string') return false;
-  const re = /^[^\s@]+@gndec\.ac\.in$/i;
+  const re = /^[^\s@]+@gmail\.com$/i;
   return re.test(email.trim());
 }
 

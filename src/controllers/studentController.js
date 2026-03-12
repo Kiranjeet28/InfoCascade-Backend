@@ -13,9 +13,9 @@ exports.register = async (req, res, next) => {
       return res.status(400).json({ error: 'name, email, urn, crn, password and department are required' });
     }
 
-    // Validate @gndec.ac.in email
-    if (!/@gndec\.ac\.in$/i.test(email)) {
-      return res.status(400).json({ error: 'Email must be a valid @gndec.ac.in address' });
+    // Validate @gmail.com email
+    if (!/@gmail\.com$/i.test(email)) {
+      return res.status(400).json({ error: 'Email must be a valid @gmail.com address' });
     }
 
     const hashed = await bcrypt.hash(password, 10);

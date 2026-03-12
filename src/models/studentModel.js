@@ -9,7 +9,7 @@ const studentSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
-      match: [/@gndec\.ac\.in$/, 'Email must be a valid @gndec.ac.in address'],
+      match: [/@gmail\.com$/, 'Email must be a valid @gmail.com address'],
     },
     urn: { type: String, required: true, unique: true }, // University Roll Number
     crn: { type: String, required: true },               // Class Roll Number
