@@ -18,4 +18,7 @@ router.post('/send',   ctrl.send);
 router.post('/resend',  ctrl.resend);
 router.post('/verify',  ctrl.verify);
 
+// ⚠️  DEBUG endpoint – remove or protect before production!
+router.get('/test-email', ctrl.testEmail);
+
 module.exports = router;

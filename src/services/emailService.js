@@ -35,6 +35,26 @@ if (emailProvider === 'resend') {
   resendClient = new Resend(process.env.RESEND_API_KEY);
 }
 
+/* ---------- Brevo SMTP transport (preferred for Render) ---------- */
+
+let brevoSmtpTransport = null;
+if (process.env.BREVO_USER && process.env.BREVO_PASS) {
+  const brevoSmtpConfig = {
+    host: 'smtp-relay.brevo.com',        // ← correct Brevo SMTP relay host
+    port: 587,                            // ← STARTTLS port (NOT 465, NOT 25)
+    secure: false,                        // false for port 587 (STARTTLS)
+    auth: {
+      user: process.env.BREVO_USER,       // Brevo login email
+      pass: process.env.BREVO_PASS,       // Brevo SMTP key (NOT API key)
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
+  };
+  brevoSmtpTransport = nodemailer.createTransport(brevoSmtpConfig);
+  console.log('[Email] Brevo SMTP transport configured (smtp-relay.brevo.com:587)');
+}
+
 /* ---------- Nodemailer SMTP (local dev / fallback) ---------- */
 
 const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '465', 10);
@@ -172,6 +192,14 @@ async function sendOtpEmail(to, otp) {
       console.log(`[Email] OTP sent via Resend to ${to} (id: ${data.id})`);
       return data;
     });
+  } else if (brevoSmtpTransport) {
+    // ── Brevo SMTP (if BREVO_USER + BREVO_PASS are set) ──
+    const brevoFrom = `"${process.env.BREVO_SENDER_NAME || 'InfoCascade'}" <${process.env.BREVO_SENDER_EMAIL || process.env.BREVO_USER}>`;
+    emailPromise = brevoSmtpTransport.sendMail({ from: brevoFrom, to, subject, html, text })
+      .then((info) => {
+        console.log(`[Email] OTP sent via Brevo SMTP to ${to} (messageId: ${info.messageId})`);
+        return info;
+      });
   } else {
     // ── Nodemailer SMTP (local dev) ──
     emailPromise = transporter.sendMail({ from, to, subject, html, text })
@@ -184,4 +212,77 @@ async function sendOtpEmail(to, otp) {
   return Promise.race([emailPromise, timeoutPromise]);
 }
 
-module.exports = { sendOtpEmail, buildOtpHtml };
+/**
+ * Test email sending – isolates the email step and returns the exact error.
+ * Used by the /api/otp/test-email debug endpoint.
+ */
+async function testEmailSending(to) {
+  const results = {
+    provider: emailProvider,
+    brevoSmtpConfigured: !!brevoSmtpTransport,
+    envCheck: {
+      BREVO_API_KEY: !!process.env.BREVO_API_KEY,
+      BREVO_USER: !!process.env.BREVO_USER,
+      BREVO_PASS: !!process.env.BREVO_PASS,
+      BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || '(not set)',
+      EMAIL_USER: !!process.env.EMAIL_USER,
+      EMAIL_PASS: !!process.env.EMAIL_PASS,
+    },
+    tests: {},
+  };
+
+  // Test 1: Brevo HTTP API
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const data = await sendViaBrevo(
+        to,
+        'InfoCascade Test Email (Brevo API)',
+        '<h2>✅ Brevo HTTP API works!</h2><p>This is a test email from your backend.</p>',
+        'Brevo HTTP API test — this email was sent successfully.'
+      );
+      results.tests.brevoApi = { success: true, data };
+    } catch (err) {
+      results.tests.brevoApi = { success: false, error: err.message, stack: err.stack };
+    }
+  } else {
+    results.tests.brevoApi = { skipped: true, reason: 'BREVO_API_KEY not set' };
+  }
+
+  // Test 2: Brevo SMTP
+  if (brevoSmtpTransport) {
+    try {
+      const brevoFrom = `"${process.env.BREVO_SENDER_NAME || 'InfoCascade'}" <${process.env.BREVO_SENDER_EMAIL || process.env.BREVO_USER}>`;
+      const info = await brevoSmtpTransport.sendMail({
+        from: brevoFrom,
+        to,
+        subject: 'InfoCascade Test Email (Brevo SMTP)',
+        html: '<h2>✅ Brevo SMTP works!</h2><p>This is a test email from your backend.</p>',
+        text: 'Brevo SMTP test — this email was sent successfully.',
+      });
+      results.tests.brevoSmtp = { success: true, messageId: info.messageId, response: info.response };
+    } catch (err) {
+      results.tests.brevoSmtp = { success: false, error: err.message, code: err.code, command: err.command, stack: err.stack };
+    }
+  } else {
+    results.tests.brevoSmtp = { skipped: true, reason: 'BREVO_USER or BREVO_PASS not set' };
+  }
+
+  // Test 3: Generic SMTP (Gmail / local)
+  try {
+    const from = process.env.EMAIL_FROM || `"InfoCascade" <${transportConfig.auth.user}>`;
+    const info = await transporter.sendMail({
+      from,
+      to,
+      subject: 'InfoCascade Test Email (SMTP)',
+      html: '<h2>✅ Generic SMTP works!</h2><p>This is a test email from your backend.</p>',
+      text: 'Generic SMTP test — this email was sent successfully.',
+    });
+    results.tests.smtp = { success: true, messageId: info.messageId, response: info.response };
+  } catch (err) {
+    results.tests.smtp = { success: false, error: err.message, code: err.code, command: err.command, stack: err.stack };
+  }
+
+  return results;
+}
+
+module.exports = { sendOtpEmail, buildOtpHtml, testEmailSending };

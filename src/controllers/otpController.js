@@ -10,7 +10,7 @@
 
 const { generateOtp, hashOtp, verifyOtp, isValidEmail } = require('../utils/otp');
 const otpStore = require('../services/otpStore');
-const { sendOtpEmail } = require('../services/emailService');
+const { sendOtpEmail, testEmailSending } = require('../services/emailService');
 
 /**
  * Extract email from request body.
@@ -54,11 +54,14 @@ exports.send = async (req, res, next) => {
       await sendOtpEmail(email, otp);
     } catch (emailErr) {
       console.error(`[OTP] Email send failed for ${email}:`, emailErr.message);
+      console.error('[OTP] Full email error:', emailErr);
+      console.error('[OTP] Error stack:', emailErr.stack);
       // Clean up stored OTP since email didn't go out
       await otpStore.deleteOtp(email).catch(() => {});
       return res.status(500).json({
         success: false,
         message: 'Failed to send OTP email. Please try again later.',
+        debug_error: process.env.NODE_ENV !== 'production' ? emailErr.message : undefined,
       });
     }
 
@@ -113,10 +116,13 @@ exports.resend = async (req, res, next) => {
       await sendOtpEmail(email, otp);
     } catch (emailErr) {
       console.error(`[OTP] Resend email failed for ${email}:`, emailErr.message);
+      console.error('[OTP] Full resend email error:', emailErr);
+      console.error('[OTP] Resend error stack:', emailErr.stack);
       await otpStore.deleteOtp(email).catch(() => {});
       return res.status(500).json({
         success: false,
         message: 'Failed to send OTP email. Please try again later.',
+        debug_error: process.env.NODE_ENV !== 'production' ? emailErr.message : undefined,
       });
     }
 
@@ -201,6 +207,40 @@ exports.verify = async (req, res, next) => {
     return res.status(500).json({
       success: false,
       message: 'Verification failed. Please try again.',
+    });
+  }
+};
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/otp/test-email?to=email@example.com                     */
+/*  DEBUG endpoint – tests all email providers and returns results.   */
+/*  ⚠️  Remove or protect this endpoint before going to production!  */
+/* ------------------------------------------------------------------ */
+exports.testEmail = async (req, res) => {
+  try {
+    const to = (req.query.to || req.query.email || '').trim().toLowerCase();
+    if (!to || !to.includes('@')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Provide ?to=email@example.com query parameter.',
+      });
+    }
+
+    console.log(`[OTP] Test email requested for: ${to}`);
+    const results = await testEmailSending(to);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Email test completed — check results below.',
+      results,
+    });
+  } catch (err) {
+    console.error('[OTP] test-email error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Test email failed.',
+      error: err.message,
+      stack: err.stack,
     });
   }
 };
