@@ -11,6 +11,8 @@
 const { generateOtp, hashOtp, verifyOtp, isValidEmail } = require('../utils/otp');
 const otpStore = require('../services/otpStore');
 const { sendOtpEmail, testEmailSending } = require('../services/emailService');
+const fail = (res, status, code, message, extra = {}) =>
+  res.status(status).json({ success: false, code, message, ...extra });
 
 /**
  * Extract email from request body.
@@ -28,9 +30,8 @@ exports.send = async (req, res, next) => {
     const email = extractEmail(req.body);
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email. Must be a valid @gmail.com address.',
+      return fail(res, 400, 'OTP_INVALID_EMAIL', 'Invalid email. Must be a valid @gmail.com address.', {
+        field: 'email',
       });
     }
 
@@ -38,9 +39,8 @@ exports.send = async (req, res, next) => {
     const sendCount = await otpStore.getSendCount(email);
     if (sendCount >= otpStore.SEND_LIMIT) {
       console.warn(`[OTP] Send limit reached for ${email}`);
-      return res.status(429).json({
-        success: false,
-        message: 'OTP send limit reached. Please try again later.',
+      return fail(res, 429, 'OTP_SEND_LIMIT_REACHED', 'OTP send limit reached. Please try again later.', {
+        limit: otpStore.SEND_LIMIT,
       });
     }
 
@@ -58,9 +58,7 @@ exports.send = async (req, res, next) => {
       console.error('[OTP] Error stack:', emailErr.stack);
       // Clean up stored OTP since email didn't go out
       await otpStore.deleteOtp(email).catch(() => {});
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to send OTP email. Please try again later.',
+      return fail(res, 500, 'OTP_EMAIL_SEND_FAILED', 'Failed to send OTP email. Please try again later.', {
         debug_error: process.env.NODE_ENV !== 'production' ? emailErr.message : undefined,
       });
     }
@@ -73,10 +71,7 @@ exports.send = async (req, res, next) => {
     });
   } catch (err) {
     console.error('[OTP] send error:', err.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Something went wrong. Please try again.',
-    });
+    return fail(res, 500, 'OTP_SEND_INTERNAL_ERROR', 'Something went wrong. Please try again.');
   }
 };
 
@@ -88,9 +83,8 @@ exports.resend = async (req, res, next) => {
     const email = extractEmail(req.body);
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email. Must be a valid @gmail.com address.',
+      return fail(res, 400, 'OTP_INVALID_EMAIL', 'Invalid email. Must be a valid @gmail.com address.', {
+        field: 'email',
       });
     }
 
@@ -98,9 +92,8 @@ exports.resend = async (req, res, next) => {
     const resendCount = await otpStore.getResendCount(email);
     if (resendCount >= otpStore.RESEND_LIMIT) {
       console.warn(`[OTP] Resend limit reached for ${email}`);
-      return res.status(429).json({
-        success: false,
-        message: 'Resend limit reached. Please try again later.',
+      return fail(res, 429, 'OTP_RESEND_LIMIT_REACHED', 'Resend limit reached. Please try again later.', {
+        limit: otpStore.RESEND_LIMIT,
       });
     }
 
@@ -119,9 +112,7 @@ exports.resend = async (req, res, next) => {
       console.error('[OTP] Full resend email error:', emailErr);
       console.error('[OTP] Resend error stack:', emailErr.stack);
       await otpStore.deleteOtp(email).catch(() => {});
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to send OTP email. Please try again later.',
+      return fail(res, 500, 'OTP_EMAIL_SEND_FAILED', 'Failed to send OTP email. Please try again later.', {
         debug_error: process.env.NODE_ENV !== 'production' ? emailErr.message : undefined,
       });
     }
@@ -134,10 +125,7 @@ exports.resend = async (req, res, next) => {
     });
   } catch (err) {
     console.error('[OTP] resend error:', err.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Something went wrong. Please try again.',
-    });
+    return fail(res, 500, 'OTP_RESEND_INTERNAL_ERROR', 'Something went wrong. Please try again.');
   }
 };
 
@@ -150,16 +138,14 @@ exports.verify = async (req, res, next) => {
     const otp   = (req.body.otp || '').trim();
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email. Must be a valid @gmail.com address.',
+      return fail(res, 400, 'OTP_INVALID_EMAIL', 'Invalid email. Must be a valid @gmail.com address.', {
+        field: 'email',
       });
     }
 
     if (!otp || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP must be a 6-digit number.',
+      return fail(res, 400, 'OTP_INVALID_FORMAT', 'OTP must be a 6-digit number.', {
+        field: 'otp',
       });
     }
 
@@ -167,28 +153,23 @@ exports.verify = async (req, res, next) => {
     const attempts = await otpStore.getAttempts(email);
     if (attempts >= otpStore.MAX_VERIFY_ATTEMPTS) {
       console.warn(`[OTP] Verify locked for ${email} (${attempts} attempts)`);
-      return res.status(429).json({
-        success: false,
-        message: 'Too many failed attempts. Please request a new OTP.',
+      return fail(res, 429, 'OTP_VERIFY_LIMIT_REACHED', 'Too many failed attempts. Please request a new OTP.', {
+        limit: otpStore.MAX_VERIFY_ATTEMPTS,
       });
     }
 
     const storedHash = await otpStore.getOtp(email);
     if (!storedHash) {
       // Could be expired or never sent – same message to avoid info leak
-      return res.status(400).json({
-        success: false,
-        message: 'OTP is invalid or has expired.',
-      });
+      return fail(res, 400, 'OTP_INVALID_OR_EXPIRED', 'OTP is invalid or has expired.');
     }
 
     if (!verifyOtp(otp, storedHash)) {
       await otpStore.incrementAttempts(email);
       const newCount = attempts + 1;
       console.log(`[OTP] Failed verify for ${email} (attempt ${newCount}/${otpStore.MAX_VERIFY_ATTEMPTS})`);
-      return res.status(400).json({
-        success: false,
-        message: 'OTP is invalid or has expired.',
+      return fail(res, 400, 'OTP_INVALID_OR_EXPIRED', 'OTP is invalid or has expired.', {
+        attemptsRemaining: Math.max(otpStore.MAX_VERIFY_ATTEMPTS - newCount, 0),
       });
     }
 
@@ -204,10 +185,7 @@ exports.verify = async (req, res, next) => {
     });
   } catch (err) {
     console.error('[OTP] verify error:', err.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Verification failed. Please try again.',
-    });
+    return fail(res, 500, 'OTP_VERIFY_INTERNAL_ERROR', 'Verification failed. Please try again.');
   }
 };
 
@@ -220,9 +198,8 @@ exports.testEmail = async (req, res) => {
   try {
     const to = (req.query.to || req.query.email || '').trim().toLowerCase();
     if (!to || !to.includes('@')) {
-      return res.status(400).json({
-        success: false,
-        message: 'Provide ?to=email@example.com query parameter.',
+      return fail(res, 400, 'OTP_TEST_EMAIL_MISSING_QUERY', 'Provide ?to=email@example.com query parameter.', {
+        requiredQuery: ['to'],
       });
     }
 
@@ -236,9 +213,7 @@ exports.testEmail = async (req, res) => {
     });
   } catch (err) {
     console.error('[OTP] test-email error:', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Test email failed.',
+    return fail(res, 500, 'OTP_TEST_EMAIL_INTERNAL_ERROR', 'Test email failed.', {
       error: err.message,
       stack: err.stack,
     });

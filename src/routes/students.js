@@ -3,6 +3,7 @@ const router = express.Router();
 const ctrl = require('../controllers/studentController');
 
 
+router.get('/check-availability', ctrl.checkAvailability); // Debounced field validation for email/urn/crn
 router.post('/register', ctrl.register);
 router.post('/sign', ctrl.sign);
 router.post('/auth', ctrl.getByUrn); // Get student details by URN and password

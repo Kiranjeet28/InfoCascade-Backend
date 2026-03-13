@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret';
+const fail = (res, status, code, message, extra = {}) =>
+  res.status(status).json({ success: false, code, message, ...extra });
 
 // ─── Register ────────────────────────────────────────────────────────
 exports.register = async (req, res, next) => {
@@ -10,12 +12,44 @@ exports.register = async (req, res, next) => {
     const { name, email, urn, crn, password, department, semester, group } = req.body;
 
     if (!name || !email || !urn || !crn || !password || !department) {
-      return res.status(400).json({ error: 'name, email, urn, crn, password and department are required' });
+      return fail(
+        res,
+        400,
+        'STUDENT_REGISTER_REQUIRED_FIELDS',
+        'name, email, urn, crn, password and department are required',
+        {
+          requiredFields: ['name', 'email', 'urn', 'crn', 'password', 'department'],
+        }
+      );
     }
 
     // Validate @gmail.com email
     if (!/@gmail\.com$/i.test(email)) {
-      return res.status(400).json({ error: 'Email must be a valid @gmail.com address' });
+      return fail(res, 400, 'STUDENT_REGISTER_INVALID_EMAIL', 'Email must be a valid @gmail.com address', {
+        field: 'email',
+      });
+    }
+
+    const existingStudent = await Student.findOne({
+      $or: [{ email }, { urn }, { crn }],
+    }).select('email urn crn');
+
+    if (existingStudent) {
+      if (existingStudent.email === email) {
+        return fail(res, 400, 'STUDENT_EMAIL_ALREADY_EXISTS', 'Email is already registered', {
+          field: 'email',
+        });
+      }
+      if (existingStudent.urn === urn) {
+        return fail(res, 400, 'STUDENT_URN_ALREADY_EXISTS', 'URN is already registered', {
+          field: 'urn',
+        });
+      }
+      if (existingStudent.crn === crn) {
+        return fail(res, 400, 'STUDENT_CRN_ALREADY_EXISTS', 'CRN is already registered', {
+          field: 'crn',
+        });
+      }
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -52,8 +86,66 @@ exports.register = async (req, res, next) => {
         Object.keys(err.keyPattern || {})[0] ||
         Object.keys(err.keyValue || {})[0] ||
         'unique field';
-      return res.status(400).json({ error: `Duplicate value for ${field}` });
+      return fail(res, 400, 'STUDENT_DUPLICATE_VALUE', `Duplicate value for ${field}`, {
+        field,
+      });
     }
+    next(err);
+  }
+};
+
+// ─── Check Field Availability (email / urn / crn) ──────────────────
+exports.checkAvailability = async (req, res, next) => {
+  try {
+    const { type, value } = req.query;
+
+    if (!type || !value) {
+      return fail(
+        res,
+        400,
+        'STUDENT_AVAILABILITY_MISSING_QUERY',
+        'type and value query params are required',
+        {
+          requiredQuery: ['type', 'value'],
+        }
+      );
+    }
+
+    const normalizedType = String(type).toLowerCase().trim();
+    const normalizedValue = String(value).trim();
+
+    if (!['email', 'urn', 'crn'].includes(normalizedType)) {
+      return fail(res, 400, 'STUDENT_AVAILABILITY_INVALID_TYPE', "type must be one of: 'email', 'urn', 'crn'", {
+        field: 'type',
+      });
+    }
+
+    if (!normalizedValue) {
+      return fail(res, 400, 'STUDENT_AVAILABILITY_EMPTY_VALUE', 'value must not be empty', {
+        field: 'value',
+      });
+    }
+
+    if (normalizedType === 'email' && !/@gmail\.com$/i.test(normalizedValue)) {
+      return res.json({
+        success: true,
+        type: normalizedType,
+        value: normalizedValue,
+        available: false,
+        reason: 'Email must be a valid @gmail.com address',
+      });
+    }
+
+    const query = { [normalizedType]: normalizedType === 'email' ? normalizedValue.toLowerCase() : normalizedValue };
+    const existing = await Student.exists(query);
+
+    return res.json({
+      success: true,
+      type: normalizedType,
+      value: normalizedValue,
+      available: !Boolean(existing),
+    });
+  } catch (err) {
     next(err);
   }
 };
@@ -63,19 +155,21 @@ exports.sign = async (req, res, next) => {
   try {
     const { identifier, password } = req.body; // identifier can be urn, crn or email
     if (!identifier || !password) {
-      return res.status(400).json({ success: false, error: 'identifier and password required' });
+      return fail(res, 400, 'STUDENT_SIGNIN_REQUIRED_FIELDS', 'identifier and password required', {
+        requiredFields: ['identifier', 'password'],
+      });
     }
 
     const student = await Student.findOne({
       $or: [{ urn: identifier }, { crn: identifier }, { email: identifier }],
     });
     if (!student) {
-      return res.status(400).json({ success: false, error: 'Invalid credentials' });
+      return fail(res, 400, 'STUDENT_SIGNIN_INVALID_CREDENTIALS', 'Invalid credentials');
     }
 
     const ok = await bcrypt.compare(password, student.password);
     if (!ok) {
-      return res.status(400).json({ success: false, error: 'Invalid credentials' });
+      return fail(res, 400, 'STUDENT_SIGNIN_INVALID_CREDENTIALS', 'Invalid credentials');
     }
 
     const token = jwt.sign({ id: student._id }, JWT_SECRET, { expiresIn: '7d' });
@@ -104,13 +198,17 @@ exports.sign = async (req, res, next) => {
 exports.getByUrn = async (req, res, next) => {
   try {
     const { urn, password } = req.body;
-    if (!urn || !password) return res.status(400).json({ success: false, error: 'urn and password required' });
+    if (!urn || !password) {
+      return fail(res, 400, 'STUDENT_AUTH_REQUIRED_FIELDS', 'urn and password required', {
+        requiredFields: ['urn', 'password'],
+      });
+    }
 
     const student = await Student.findOne({ urn });
-    if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
+    if (!student) return fail(res, 404, 'STUDENT_NOT_FOUND', 'Student not found', { field: 'urn' });
 
     const ok = await bcrypt.compare(password, student.password);
-    if (!ok) return res.status(400).json({ success: false, error: 'Invalid credentials' });
+    if (!ok) return fail(res, 400, 'STUDENT_AUTH_INVALID_CREDENTIALS', 'Invalid credentials');
 
     const safeStudent = {
       _id: student._id,
@@ -149,7 +247,7 @@ exports.updateStudent = async (req, res, next) => {
     }).select('-password -__v');
 
     if (!updatedStudent) {
-      return res.status(404).json({ error: 'Student not found' });
+      return fail(res, 404, 'STUDENT_NOT_FOUND', 'Student not found', { field: 'id' });
     }
     res.json({ message: 'Student updated', student: updatedStudent });
   } catch (err) {
@@ -172,14 +270,16 @@ exports.forgetPassword = async (req, res, next) => {
   try {
     const { identifier, newPassword } = req.body; // identifier can be urn, crn or email
     if (!identifier || !newPassword) {
-      return res.status(400).json({ error: 'identifier and newPassword required' });
+      return fail(res, 400, 'STUDENT_FORGOT_PASSWORD_REQUIRED_FIELDS', 'identifier and newPassword required', {
+        requiredFields: ['identifier', 'newPassword'],
+      });
     }
 
     const student = await Student.findOne({
       $or: [{ urn: identifier }, { crn: identifier }, { email: identifier }],
     });
     if (!student) {
-      return res.status(404).json({ error: 'Student not found' });
+      return fail(res, 404, 'STUDENT_NOT_FOUND', 'Student not found', { field: 'identifier' });
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
