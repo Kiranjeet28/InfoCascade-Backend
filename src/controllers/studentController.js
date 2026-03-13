@@ -48,7 +48,10 @@ exports.register = async (req, res, next) => {
     });
   } catch (err) {
     if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern)[0];
+      const field =
+        Object.keys(err.keyPattern || {})[0] ||
+        Object.keys(err.keyValue || {})[0] ||
+        'unique field';
       return res.status(400).json({ error: `Duplicate value for ${field}` });
     }
     next(err);
