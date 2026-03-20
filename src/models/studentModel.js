@@ -21,4 +21,12 @@ const studentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// ⚡ OPTIMIZATION: Add indexes for faster queries
+studentSchema.index({ email: 1 }); // Email lookup
+studentSchema.index({ urn: 1 }); // URN lookup
+studentSchema.index({ crn: 1 }); // CRN lookup
+studentSchema.index({ department: 1 }); // Department filter
+studentSchema.index({ createdAt: -1 }); // Sort by date
+studentSchema.index({ email: 1, createdAt: -1 }); // Compound index
+
 module.exports = mongoose.model('Student', studentSchema);

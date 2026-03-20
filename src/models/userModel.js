@@ -34,4 +34,9 @@ userSchema.methods.toJSON = function() {
   return obj;
 };
 
+// ⚡ OPTIMIZATION: Add indexes for faster queries
+userSchema.index({ email: 1 }); // Email lookup
+userSchema.index({ createdAt: -1 }); // Sort by date
+userSchema.index({ email: 1, createdAt: -1 }); // Compound index
+
 module.exports = mongoose.model('User', userSchema);

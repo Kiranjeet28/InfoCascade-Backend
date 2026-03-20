@@ -1,6 +1,7 @@
 const Student = require('../models/studentModel');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { leanQuery, paginatedQuery, selectFields } = require('../utils/queryOptimizer');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret';
 const fail = (res, status, code, message, extra = {}) =>
@@ -258,8 +259,26 @@ exports.updateStudent = async (req, res, next) => {
 // ─── Get All Students ────────────────────────────────────────────────
 exports.getAll = async (req, res, next) => {
   try {
-    const students = await Student.find().select('-password -__v');
-    res.json(students);
+    // ⚡ OPTIMIZATION: Use pagination + lean queries
+    // Reduce memory, faster response, prevent N+1 queries
+    const result = await paginatedQuery(
+      Student,
+      {},
+      { page: req.query.page, limit: req.query.limit }
+    );
+
+    // Select only needed fields
+    const students = await Student.find()
+      .skip((result.pagination.page - 1) * result.pagination.limit)
+      .limit(result.pagination.limit)
+      .select('-password -__v')
+      .lean();
+
+    res.json({
+      success: true,
+      data: students,
+      pagination: result.pagination
+    });
   } catch (err) {
     next(err);
   }

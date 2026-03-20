@@ -1,6 +1,7 @@
 const express = require('express');
 const morgan = require('morgan');
 const cors = require('cors');
+const compression = require('compression');
 const routes = require('./routes');
 const { applySecurity } = require('./middleware/securityMiddleware');
 
@@ -10,6 +11,9 @@ const app = express();
 // Apply comprehensive security middleware BEFORE any other middleware/routes
 const { globalLimiter, authLimiter, apiLimiter } = applySecurity(app);
 // ====================================
+
+// ⚡ COMPRESSION: Reduce response payload size by 60-90%
+app.use(compression({ level: 6, threshold: 1024 }));
 
 // Environment-specific logging
 const morganFormat = process.env.NODE_ENV === 'production' ? 'combined' : 'dev';

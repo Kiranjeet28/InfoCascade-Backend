@@ -42,6 +42,14 @@ async function connectDB() {
   const options = {
     useNewUrlParser: true,
     useUnifiedTopology: true,
+    // ⚡ CONNECTION POOLING: Optimize concurrent requests
+    maxPoolSize: 10,
+    minPoolSize: 5,
+    maxIdleTimeMS: 30000,
+    socketTimeoutMS: 45000,
+    serverSelectionTimeoutMS: 10000,
+    // ⚡ AUTO INDEX CREATION
+    autoIndex: false, // In production, create indexes manually
   };
 
   try {
