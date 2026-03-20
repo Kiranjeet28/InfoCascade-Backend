@@ -1,10 +1,15 @@
 const express = require('express');
 const router = express.Router();
 
+const auth = require('./auth');
 const users = require('./users');
 const students = require('./students');
 const otp = require('./otp');
 
+// Authentication routes
+router.use('/auth', auth);
+
+// User and student routes
 router.use('/users', users);
 router.use('/students', students);
 router.use('/otp', otp);
