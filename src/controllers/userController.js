@@ -1,4 +1,5 @@
 const User = require('../models/userModel');
+const { leanQuery, paginatedQuery, selectFields } = require('../utils/queryOptimizer');
 const fail = (res, status, code, message, extra = {}) =>
   res.status(status).json({ success: false, code, message, ...extra });
 
@@ -25,8 +26,25 @@ exports.createUser = async (req, res, next) => {
 
 exports.getUsers = async (req, res, next) => {
   try {
-    const users = await User.find();
-    res.json(users);
+    // ⚡ OPTIMIZATION: Use pagination + lean queries
+    const result = await paginatedQuery(
+      User,
+      {},
+      { page: req.query.page, limit: req.query.limit }
+    );
+
+    // Select only needed fields, use lean for performance
+    const users = await User.find()
+      .skip((result.pagination.page - 1) * result.pagination.limit)
+      .limit(result.pagination.limit)
+      .select('-password -__v')
+      .lean();
+
+    res.json({
+      success: true,
+      data: users,
+      pagination: result.pagination
+    });
   } catch (err) {
     next(err);
   }
