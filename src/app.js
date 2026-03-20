@@ -2,24 +2,27 @@ const express = require('express');
 const morgan = require('morgan');
 const cors = require('cors');
 const routes = require('./routes');
+const { applySecurity } = require('./middleware/securityMiddleware');
 
 const app = express();
 
-// Trust Render's reverse proxy (required for rate-limiting & req.ip)
-app.set('trust proxy', 1);
+// ========== SECURITY SETUP ==========
+// Apply comprehensive security middleware BEFORE any other middleware/routes
+const { globalLimiter, authLimiter, apiLimiter } = applySecurity(app);
+// ====================================
 
 // Environment-specific logging
 const morganFormat = process.env.NODE_ENV === 'production' ? 'combined' : 'dev';
 app.use(morgan(morganFormat));
 
-// CORS configuration
+// CORS configuration (after security headers)
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
   credentials: true
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Note: Body parsing is now handled by applySecurity() with size limits
+// No need to call express.json() and express.urlencoded() again
 
 // Routes
 app.use('/api', routes);
