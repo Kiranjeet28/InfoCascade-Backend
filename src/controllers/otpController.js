@@ -173,7 +173,8 @@ exports.verify = async (req, res, next) => {
       });
     }
 
-    // Success – clean up
+    // Success – mark as verified and clean up old OTP
+    await otpStore.markEmailVerified(email);
     await otpStore.deleteOtp(email);
     await otpStore.resetAttempts(email);
 

@@ -188,7 +188,62 @@ const store = {
     return v ? parseInt(v, 10) : 0;
   },
 
-  /* ---- constants exposed for controllers ---- */
+  /* ---- Email verification status (for forgot password) ---- */
+
+  async markEmailVerified(email) {
+    const key = k('verified', email);
+    const VERIFIED_TTL = 600; // 10 minutes to use verified status
+    if (useRedis) {
+      await redis.set(key, 'true', 'EX', VERIFIED_TTL);
+    } else {
+      memSet(key, 'true', VERIFIED_TTL);
+    }
+  },
+
+  async isEmailVerified(email) {
+    const key = k('verified', email);
+    if (useRedis) {
+      const v = await redis.get(key);
+      return v === 'true';
+    }
+    const v = memGet(key);
+    return v === 'true';
+  },
+
+  async clearEmailVerified(email) {
+    const key = k('verified', email);
+    if (useRedis) await redis.del(key);
+    else memDel(key);
+  },
+    /* ---- Email verification status (for forgot password) ---- */
+
+  async markEmailVerified(email) {
+    const key = k('verified', email);
+    const VERIFIED_TTL = 600; // 10 minutes to use verified status
+    if (useRedis) {
+      await redis.set(key, 'true', 'EX', VERIFIED_TTL);
+    } else {
+      memSet(key, 'true', VERIFIED_TTL);
+    }
+  },
+
+  async isEmailVerified(email) {
+    const key = k('verified', email);
+    if (useRedis) {
+      const v = await redis.get(key);
+      return v === 'true';
+    }
+    const v = memGet(key);
+    return v === 'true';
+  },
+
+  async clearEmailVerified(email) {
+    const key = k('verified', email);
+    if (useRedis) await redis.del(key);
+    else memDel(key);
+  },
+
+/* ---- constants exposed for controllers ---- */
   MAX_VERIFY_ATTEMPTS,
   VERIFY_LOCK_SECONDS,
   SEND_LIMIT,

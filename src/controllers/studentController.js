@@ -287,11 +287,26 @@ exports.getAll = async (req, res, next) => {
 // ─── Forget Password ────────────────────────────────────────────────
 exports.forgetPassword = async (req, res, next) => {
   try {
+    const otpStore = require('../services/otpStore');
     const { identifier, newPassword } = req.body; // identifier can be urn, crn or email
     if (!identifier || !newPassword) {
       return fail(res, 400, 'STUDENT_FORGOT_PASSWORD_REQUIRED_FIELDS', 'identifier and newPassword required', {
         requiredFields: ['identifier', 'newPassword'],
       });
+    }
+
+    // Verify email was actually verified via OTP before allowing password reset
+    const email = identifier.toLowerCase().trim().endsWith('@gmail.com') 
+      ? identifier.toLowerCase().trim()
+      : null;
+    
+    if (email) {
+      const isVerified = await otpStore.isEmailVerified(email);
+      if (!isVerified) {
+        return fail(res, 403, 'STUDENT_EMAIL_NOT_VERIFIED', 'Email must be verified via OTP before resetting password', {
+          field: 'email',
+        });
+      }
     }
 
     const student = await Student.findOne({
@@ -304,6 +319,11 @@ exports.forgetPassword = async (req, res, next) => {
     const hashed = await bcrypt.hash(newPassword, 10);
     student.password = hashed;
     await student.save();
+
+    // Clear verified status after successful password reset
+    if (email) {
+      await otpStore.clearEmailVerified(email).catch(() => {});
+    }
 
     res.json({ success: true, message: 'Password updated successfully' });
   } catch (err) {
