@@ -36,6 +36,11 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
 });
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({ message: 'API is running' });
+});
+
 // 404 handler
 app.use((req, res) =>
   res.status(404).json({
