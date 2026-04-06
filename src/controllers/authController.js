@@ -129,11 +129,7 @@ exports.login = async (req, res, next) => {
       message: 'Login successful',
       page: 1,
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
+      user: user.toJSON(),
     });
 
   } catch (err) {
@@ -203,11 +199,7 @@ exports.loginWithOTP = async (req, res, next) => {
       message: 'OTP verification successful. Login complete.',
       page: 1,
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
+      user: user.toJSON(),
     });
 
   } catch (err) {
@@ -308,11 +300,7 @@ exports.signup = async (req, res, next) => {
       code: 'SIGNUP_SUCCESS',
       message: 'Account created successfully',
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
+      user: user.toJSON(),
     });
 
   } catch (err) {
