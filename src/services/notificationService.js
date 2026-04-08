@@ -1,209 +1,124 @@
-const Expo = require('expo-server-sdk').default;
-const mongoose = require('mongoose');
+const Expo = require("expo-server-sdk").default;
+const mongoose = require("mongoose");
 
-// Global variables
 let expo = null;
 let PushTokenModel = null;
 let NotificationHistoryModel = null;
 let StudentModel = null;
 
-/**
- * Initialize Notification Service
- * Sets up Expo client and loads required models
- * @returns {Object} - { success: boolean, message: string }
- */
 function initializeNotificationService() {
   try {
-    // Check if EXPO_ACCESS_TOKEN is configured
     if (!process.env.EXPO_ACCESS_TOKEN) {
-      console.error('[Notification] ❌ EXPO_ACCESS_TOKEN not configured in environment variables');
-      return { success: false, message: 'EXPO_ACCESS_TOKEN not configured' };
+      console.error("[Notification] ❌ EXPO_ACCESS_TOKEN not configured");
+      return { success: false, message: "EXPO_ACCESS_TOKEN not configured" };
     }
 
-    // Initialize Expo client
+    expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
+    console.log("[Notification] ✅ Expo client initialized");
+
     try {
-      expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
-      console.log('[Notification] ✅ Expo client initialized successfully');
-    } catch (expoError) {
-      console.error('[Notification] ❌ Failed to initialize Expo:', expoError.message);
-      return { success: false, message: 'Failed to initialize Expo client' };
+      PushTokenModel = require("../models/PushToken");
+      NotificationHistoryModel = require("../models/NotificationHistory");
+      StudentModel = require("../models/studentModel");
+      console.log("[Notification] ✅ All models loaded");
+    } catch (e) {
+      console.error("[Notification] ⚠️ Model loading warning:", e.message);
     }
 
-    // Load models
-    try {
-      PushTokenModel = require('../models/PushToken');
-      NotificationHistoryModel = require('../models/NotificationHistory');
-      StudentModel = require('../models/studentModel');
-      console.log('[Notification] ✅ All models loaded successfully');
-    } catch (modelError) {
-      console.error('[Notification] ⚠️ Models not fully loaded:', modelError.message);
-      // Don't fail completely, some models might fail
-    }
-
-    console.log('[Notification] ✅ Notification service initialized successfully');
-    return { success: true, message: 'Notification service initialized' };
+    return { success: true, message: "Notification service initialized" };
   } catch (error) {
-    console.error('[Notification] ❌ Error initializing notification service:', error.message);
-    return { success: false, message: 'Initialization failed', error: error.message };
+    console.error("[Notification] ❌ Initialization failed:", error.message);
+    return { success: false, message: error.message };
   }
 }
 
-/**
- * Get Service Status
- * Returns the current status of the notification service
- * @returns {Object} - Service status details
- */
 function getServiceStatus() {
-  try {
-    const isReady = !!(expo && PushTokenModel && NotificationHistoryModel && process.env.EXPO_ACCESS_TOKEN);
-    
-    return {
-      expoInitialized: !!expo,
-      modelsLoaded: !!(PushTokenModel && NotificationHistoryModel),
-      accessTokenConfigured: !!process.env.EXPO_ACCESS_TOKEN,
-      status: isReady ? 'ready' : 'not-ready'
-    };
-  } catch (error) {
-    console.error('[Notification] ❌ Error getting service status:', error.message);
-    return {
-      expoInitialized: false,
-      modelsLoaded: false,
-      accessTokenConfigured: false,
-      status: 'error'
-    };
-  }
+  return {
+    expoInitialized: !!expo,
+    modelsLoaded: !!(PushTokenModel && NotificationHistoryModel),
+    accessTokenConfigured: !!process.env.EXPO_ACCESS_TOKEN,
+    status:
+      expo && PushTokenModel && NotificationHistoryModel
+        ? "ready"
+        : "not-ready",
+  };
 }
 
-/**
- * Register Push Token
- * Register or update a device token for a student
- * @param {string} studentId - Student ID
- * @param {string} token - Push notification token
- * @param {string} deviceType - Device type (ios/android/web)
- * @param {string} deviceName - Device name
- * @returns {Object} - Saved record or error
- */
 async function registerToken(studentId, token, deviceType, deviceName) {
   try {
-    // Validate inputs
-    if (!studentId || !token) {
-      throw new Error('studentId and token are required');
-    }
+    if (!studentId || !token) throw new Error("studentId and token required");
+    if (!PushTokenModel) throw new Error("PushToken model not loaded");
+    if (!Expo.isExpoPushToken(token))
+      throw new Error("Invalid Expo token format");
 
-    if (!PushTokenModel) {
-      throw new Error('PushToken model not loaded');
-    }
-
-    // Validate token format
-    if (!Expo.isExpoPushToken(token)) {
-      throw new Error('Invalid Expo push token format. Must start with ExponentPushToken[');
-    }
-
-    // Upsert token record
     const record = await PushTokenModel.findOneAndUpdate(
       { token },
       {
         studentId,
         token,
-        deviceType: deviceType || 'unknown',
-        deviceName: deviceName || 'Unknown Device',
+        deviceType: deviceType || "unknown",
+        deviceName: deviceName || "Unknown",
         isActive: true,
-        lastUsedAt: new Date()
+        lastUsedAt: new Date(),
       },
-      { upsert: true, new: true, runValidators: true }
+      { upsert: true, new: true },
     );
 
-    console.log('[Notification] ✅ Token registered successfully for student:', studentId);
+    console.log("[Notification] ✅ Token registered:", studentId);
     return record;
   } catch (error) {
-    console.error('[Notification] ❌ Error registering token:', error.message);
+    console.error("[Notification] ❌ Register token error:", error.message);
     throw error;
   }
 }
 
-/**
- * Get Student Tokens
- * Retrieve all active push tokens for a student
- * @param {string} studentId - Student ID
- * @returns {Array} - Array of token strings
- */
 async function getStudentTokens(studentId) {
   try {
-    if (!studentId) {
-      throw new Error('studentId is required');
-    }
-
-    if (!PushTokenModel) {
-      throw new Error('PushToken model not loaded');
-    }
+    if (!studentId || !PushTokenModel) return [];
 
     const tokens = await PushTokenModel.find({
       studentId,
-      isActive: true
-    }).select('token').lean();
+      isActive: true,
+    })
+      .select("token")
+      .lean();
 
-    const tokenStrings = tokens.map(t => t.token);
-    console.log(`[Notification] ✅ Retrieved ${tokenStrings.length} active tokens for student: ${studentId}`);
-    return tokenStrings;
+    return tokens.map((t) => t.token);
   } catch (error) {
-    console.error('[Notification] ❌ Error getting student tokens:', error.message);
+    console.error("[Notification] ❌ Get tokens error:", error.message);
     return [];
   }
 }
 
-/**
- * Send Push to Student
- * Send a push notification to a specific student
- * @param {string} studentId - Student ID
- * @param {Object} options - { title, body, notificationType, data }
- * @returns {Object} - Send result with status
- */
 async function sendPushToStudent(studentId, options) {
   try {
-    const { title, body, notificationType = 'general', data = {} } = options;
+    const { title, body, notificationType = "general", data = {} } = options;
 
-    // Validate inputs
-    if (!studentId || !title || !body) {
-      throw new Error('studentId, title, and body are required');
-    }
+    if (!studentId || !title || !body)
+      throw new Error("Missing required fields");
+    if (!expo) throw new Error("Expo not initialized");
 
-    if (!expo) {
-      throw new Error('Expo client not initialized');
-    }
-
-    // Get active tokens
     const tokens = await getStudentTokens(studentId);
-
     if (tokens.length === 0) {
-      console.log(`[Notification] ℹ️ No active tokens found for student: ${studentId}`);
-      return { success: false, sentTo: 0, message: 'No tokens', totalTokens: 0 };
+      console.log("[Notification] ℹ️ No tokens for student:", studentId);
+      return { success: false, sentTo: 0, message: "No tokens" };
     }
 
-    // Validate tokens with Expo
-    const validTokens = tokens.filter(token => Expo.isExpoPushToken(token));
-
+    const validTokens = tokens.filter((t) => Expo.isExpoPushToken(t));
     if (validTokens.length === 0) {
-      console.error('[Notification] ❌ No valid tokens found for student:', studentId);
-      return { success: false, sentTo: 0, message: 'No valid tokens', totalTokens: tokens.length };
+      return { success: false, sentTo: 0, message: "No valid tokens" };
     }
 
-    // Create messages
-    const messages = validTokens.map(token => ({
+    const messages = validTokens.map((token) => ({
       to: token,
-      sound: 'default',
+      sound: "default",
       title,
       body,
-      data: {
-        notificationType,
-        ...data
-      }
+      data: { notificationType, ...data },
     }));
 
-    // Send notifications in batches
     let sentCount = 0;
-    const notificationId = new mongoose.Types.ObjectId().toString();
     const allTickets = [];
-
     const chunks = expo.chunkPushNotifications(messages);
 
     for (const chunk of chunks) {
@@ -211,12 +126,11 @@ async function sendPushToStudent(studentId, options) {
         const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
         sentCount += ticketChunk.length;
         allTickets.push(...ticketChunk);
-      } catch (chunkError) {
-        console.error('[Notification] ❌ Error sending notification chunk:', chunkError.message);
+      } catch (e) {
+        console.error("[Notification] ❌ Chunk send error:", e.message);
       }
     }
 
-    // Log notification to history
     if (NotificationHistoryModel) {
       try {
         await NotificationHistoryModel.create({
@@ -224,133 +138,168 @@ async function sendPushToStudent(studentId, options) {
           title,
           body,
           notificationType,
-          sentAt: new Date(),
           tokensSent: sentCount,
           data,
-          status: 'sent',
-          expoTickets: allTickets
+          status: "sent",
+          expoTickets: allTickets,
         });
-      } catch (historyError) {
-        console.error('[Notification] ❌ Error logging notification to history:', historyError.message);
+      } catch (e) {
+        console.error("[Notification] ⚠️ History log error:", e.message);
       }
     }
 
-    // Update lastUsedAt on tokens
     if (PushTokenModel) {
       try {
         await PushTokenModel.updateMany(
           { studentId, isActive: true },
-          { lastUsedAt: new Date() }
+          { lastUsedAt: new Date() },
         );
-      } catch (updateError) {
-        console.error('[Notification] ❌ Error updating token timestamps:', updateError.message);
+      } catch (e) {
+        console.error("[Notification] ⚠️ Update error:", e.message);
       }
     }
 
-    console.log(`[Notification] ✅ Push notification sent to student ${studentId}: ${sentCount}/${validTokens.length} tokens`);
+    console.log(
+      `[Notification] ✅ Sent to ${studentId}: ${sentCount}/${validTokens.length}`,
+    );
     return {
       success: true,
       sentTo: sentCount,
       totalTokens: validTokens.length,
-      notificationId
     };
   } catch (error) {
-    console.error('[Notification] ❌ Error sending push to student:', error.message);
-    return { success: false, sentTo: 0, message: error.message, error };
+    console.error("[Notification] ❌ Send error:", error.message);
+    return { success: false, sentTo: 0, message: error.message };
   }
 }
 
-/**
- * Send Push to Students
- * Send a push notification to multiple students
- * @param {Array} studentIds - Array of student IDs
- * @param {Object} options - { title, body, notificationType, data }
- * @returns {Array} - Array of results for each student
- */
 async function sendPushToStudents(studentIds, options) {
   try {
     if (!Array.isArray(studentIds) || studentIds.length === 0) {
-      throw new Error('studentIds must be a non-empty array');
+      throw new Error("Invalid studentIds array");
     }
 
     const results = [];
-
     for (const studentId of studentIds) {
       const result = await sendPushToStudent(studentId, options);
-      results.push({
-        studentId,
-        ...result
-      });
+      results.push({ studentId, ...result });
     }
 
-    console.log(`[Notification] ✅ Sent notifications to ${studentIds.length} students`);
+    console.log(`[Notification] ✅ Sent to ${studentIds.length} students`);
     return results;
   } catch (error) {
-    console.error('[Notification] ❌ Error sending push to students:', error.message);
+    console.error("[Notification] ❌ Bulk send error:", error.message);
     throw error;
   }
 }
 
-/**
- * Send Push to All
- * Send a push notification to all students with active tokens
- * @param {Object} options - { title, body, notificationType, data }
- * @returns {Object|Array} - Aggregated results
- */
 async function sendPushToAll(options) {
   try {
-    if (!StudentModel) {
-      throw new Error('Student model not loaded');
-    }
+    if (!StudentModel) throw new Error("Student model not loaded");
 
-    // Query all students
-    const students = await StudentModel.find({}).select('_id').lean();
-
+    const students = await StudentModel.find({}).select("_id").lean();
     if (students.length === 0) {
-      console.log('[Notification] ℹ️ No students found');
-      return { success: false, message: 'No students found', totalStudents: 0 };
+      return { success: false, message: "No students found" };
     }
 
-    const studentIds = students.map(s => s._id.toString());
-
-    // Call sendPushToStudents
+    const studentIds = students.map((s) => s._id.toString());
     const results = await sendPushToStudents(studentIds, options);
 
-    console.log(`[Notification] ✅ Broadcast notification sent to all students`);
-    return {
-      success: true,
-      totalStudents: studentIds.length,
-      results
-    };
+    console.log("[Notification] ✅ Broadcast sent to all");
+    return { success: true, totalStudents: studentIds.length, results };
   } catch (error) {
-    console.error('[Notification] ❌ Error sending push to all:', error.message);
+    console.error("[Notification] ❌ Broadcast error:", error.message);
     throw error;
   }
 }
 
-/**
- * Mark Notification as Read
- * Update notification read status
- * @param {string} studentId - Student ID
- * @param {string} notificationId - Notification ID
- * @returns {Object} - Updated record or error
- */
 async function markNotificationAsRead(studentId, notificationId) {
   try {
-    if (!studentId || !notificationId) {
-      throw new Error('studentId and notificationId are required');
-    }
+    if (!studentId || !notificationId) throw new Error("Missing IDs");
+    if (!NotificationHistoryModel) throw new Error("Model not loaded");
 
-    if (!NotificationHistoryModel) {
-      throw new Error('NotificationHistory model not loaded');
-    }
-
-    // Update notification and verify ownership
     const updated = await NotificationHistoryModel.findOneAndUpdate(
       { _id: notificationId, studentId },
-      { readAt: new Date(), status: 'read' },
-      { new: true }
+      { readAt: new Date(), status: "read" },
+      { new: true },
     );
 
-    if (!updated) {
-      throw new Error('Notification not found or does not belong to this student');
+    if (!updated) throw new Error("Notification not found");
+
+    console.log("[Notification] ✅ Marked as read:", notificationId);
+    return updated;
+  } catch (error) {
+    console.error("[Notification] ❌ Mark read error:", error.message);
+    throw error;
+  }
+}
+
+async function getNotificationHistory(studentId, limit = 20, skip = 0) {
+  try {
+    if (!studentId || !NotificationHistoryModel) {
+      throw new Error("Invalid parameters");
+    }
+
+    const safeLimit = Math.max(1, Math.min(100, limit));
+    const safeSkip = Math.max(0, skip);
+
+    const [notifications, total] = await Promise.all([
+      NotificationHistoryModel.find({ studentId })
+        .sort({ sentAt: -1 })
+        .limit(safeLimit)
+        .skip(safeSkip)
+        .lean(),
+      NotificationHistoryModel.countDocuments({ studentId }),
+    ]);
+
+    console.log(`[Notification] ✅ Got ${notifications.length} notifications`);
+    return {
+      success: true,
+      total,
+      notifications,
+      limit: safeLimit,
+      skip: safeSkip,
+    };
+  } catch (error) {
+    console.error("[Notification] ❌ History error:", error.message);
+    return {
+      success: false,
+      total: 0,
+      notifications: [],
+      error: error.message,
+    };
+  }
+}
+
+async function deactivateToken(token) {
+  try {
+    if (!token || !PushTokenModel) throw new Error("Invalid token");
+
+    const updated = await PushTokenModel.findOneAndUpdate(
+      { token },
+      { isActive: false, deactivatedAt: new Date() },
+      { new: true },
+    );
+
+    if (!updated) throw new Error("Token not found");
+
+    console.log("[Notification] ✅ Token deactivated");
+    return updated;
+  } catch (error) {
+    console.error("[Notification] ❌ Deactivate error:", error.message);
+    throw error;
+  }
+}
+
+module.exports = {
+  initializeNotificationService,
+  getServiceStatus,
+  registerToken,
+  getStudentTokens,
+  sendPushToStudent,
+  sendPushToStudents,
+  sendPushToAll,
+  markNotificationAsRead,
+  getNotificationHistory,
+  deactivateToken,
+};
