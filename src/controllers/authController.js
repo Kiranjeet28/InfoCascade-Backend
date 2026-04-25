@@ -4,9 +4,10 @@
  * Routes to OTP verification after 3 failed attempts
  */
 
-const User = require('../models/userModel');
-const jwt = require('jsonwebtoken');
-const failedLoginTracker = require('../services/failedLoginTracker');
+const User = require("../models/userModel");
+const jwt = require("jsonwebtoken");
+const failedLoginTracker = require("../services/failedLoginTracker");
+const tokenService = require("../services/tokenService");
 
 const MAX_FAILED_ATTEMPTS = 3;
 const FAILED_ATTEMPT_WINDOW = 3600; // 1 hour in seconds
@@ -20,14 +21,14 @@ const success = (res, status, data = {}) =>
 /**
  * LOGIN - Verify credentials
  * After 3 failed attempts, require OTP verification
- * 
+ *
  * Request:
  * POST /api/auth/login
  * {
  *   "email": "user@example.com",
  *   "password": "password123"
  * }
- * 
+ *
  * Response (Success):
  * {
  *   "success": true,
@@ -35,7 +36,7 @@ const success = (res, status, data = {}) =>
  *   "user": { id, name, email },
  *   "page": 1
  * }
- * 
+ *
  * Response (Wrong Password):
  * {
  *   "success": false,
@@ -44,7 +45,7 @@ const success = (res, status, data = {}) =>
  *   "attemptsRemaining": 2,
  *   "maxAttempts": 3
  * }
- * 
+ *
  * Response (Too Many Failed Attempts):
  * {
  *   "success": false,
@@ -61,52 +62,74 @@ exports.login = async (req, res, next) => {
 
     // Validation
     if (!email || !password) {
-      return fail(res, 400, 'AUTH_REQUIRED_FIELDS', 'email and password are required', {
-        requiredFields: ['email', 'password'],
-      });
+      return fail(
+        res,
+        400,
+        "AUTH_REQUIRED_FIELDS",
+        "email and password are required",
+        {
+          requiredFields: ["email", "password"],
+        },
+      );
     }
 
     // Find user
     const user = await User.findOne({ email });
     if (!user) {
-      return fail(res, 401, 'USER_NOT_FOUND', 'User not found', {
-        field: 'email',
+      return fail(res, 401, "USER_NOT_FOUND", "User not found", {
+        field: "email",
       });
     }
 
     // Check if OTP verification is already required for this user
     const otpRequired = await failedLoginTracker.isOTPRequired(email);
     if (otpRequired) {
-      return fail(res, 403, 'OTP_VERIFICATION_REQUIRED', 'Too many failed attempts. OTP verification required.', {
-        requireOTP: true,
-        page: 2,
-        message: 'Please verify with OTP to proceed',
-      });
+      return fail(
+        res,
+        403,
+        "OTP_VERIFICATION_REQUIRED",
+        "Too many failed attempts. OTP verification required.",
+        {
+          requireOTP: true,
+          page: 2,
+          message: "Please verify with OTP to proceed",
+        },
+      );
     }
 
     // Verify password
     const isPasswordValid = await user.comparePassword(password);
-    
+
     if (!isPasswordValid) {
       // Track failed attempt
-      const failedAttempts = await failedLoginTracker.trackFailedAttempt(email, clientIp);
-      
+      const failedAttempts = await failedLoginTracker.trackFailedAttempt(
+        email,
+        clientIp,
+      );
+
       // Check if max attempts exceeded
       if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
         // Mark user as requiring OTP
         await failedLoginTracker.requireOTPVerification(email);
-        
-        return fail(res, 403, 'OTP_VERIFICATION_REQUIRED', 'Too many failed attempts. OTP verification required.', {
-          requireOTP: true,
-          page: 2,
-          failedAttempts,
-          message: 'Maximum password attempts reached. Please verify with OTP to proceed',
-        });
+
+        return fail(
+          res,
+          403,
+          "OTP_VERIFICATION_REQUIRED",
+          "Too many failed attempts. OTP verification required.",
+          {
+            requireOTP: true,
+            page: 2,
+            failedAttempts,
+            message:
+              "Maximum password attempts reached. Please verify with OTP to proceed",
+          },
+        );
       }
 
       // Return attempt count
       const attemptsRemaining = MAX_FAILED_ATTEMPTS - failedAttempts;
-      return fail(res, 401, 'INVALID_PASSWORD', 'Invalid password', {
+      return fail(res, 401, "INVALID_PASSWORD", "Invalid password", {
         attemptsRemaining,
         maxAttempts: MAX_FAILED_ATTEMPTS,
         failedAttempts,
@@ -117,21 +140,19 @@ exports.login = async (req, res, next) => {
     // Password correct - reset failed attempts
     await failedLoginTracker.resetFailedAttempts(email, clientIp);
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
+    // Generate access and refresh tokens
+    const { accessToken, refreshToken, expiresIn } =
+      await tokenService.issueTokens(user._id.toString(), user.email);
 
     return success(res, 200, {
-      code: 'LOGIN_SUCCESS',
-      message: 'Login successful',
+      code: "LOGIN_SUCCESS",
+      message: "Login successful",
       page: 1,
-      token,
+      accessToken,
+      refreshToken,
+      expiresIn,
       user: user.toJSON(),
     });
-
   } catch (err) {
     next(err);
   }
@@ -139,14 +160,14 @@ exports.login = async (req, res, next) => {
 
 /**
  * LOGIN WITH OTP - Alternative login using OTP when password attempts exceeded
- * 
+ *
  * Request:
  * POST /api/auth/login-otp
  * {
  *   "email": "user@example.com",
  *   "otp": "123456"
  * }
- * 
+ *
  * Response (Success):
  * {
  *   "success": true,
@@ -154,7 +175,7 @@ exports.login = async (req, res, next) => {
  *   "user": { id, name, email },
  *   "message": "OTP verification successful. Login complete."
  * }
- * 
+ *
  * Response (Invalid OTP):
  * {
  *   "success": false,
@@ -168,9 +189,15 @@ exports.loginWithOTP = async (req, res, next) => {
 
     // Validation
     if (!email || !otp) {
-      return fail(res, 400, 'AUTH_REQUIRED_FIELDS', 'email and otp are required', {
-        requiredFields: ['email', 'otp'],
-      });
+      return fail(
+        res,
+        400,
+        "AUTH_REQUIRED_FIELDS",
+        "email and otp are required",
+        {
+          requiredFields: ["email", "otp"],
+        },
+      );
     }
 
     // This assumes OTP verification is done in OTP controller
@@ -180,28 +207,26 @@ exports.loginWithOTP = async (req, res, next) => {
     // Find user
     const user = await User.findOne({ email });
     if (!user) {
-      return fail(res, 401, 'USER_NOT_FOUND', 'User not found');
+      return fail(res, 401, "USER_NOT_FOUND", "User not found");
     }
 
     // Clear OTP requirement
     await failedLoginTracker.clearOTPRequirement(email);
     await failedLoginTracker.resetFailedAttempts(email, req.ip);
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
+    // Generate access and refresh tokens
+    const { accessToken, refreshToken, expiresIn } =
+      await tokenService.issueTokens(user._id.toString(), user.email);
 
     return success(res, 200, {
-      code: 'LOGIN_OTP_SUCCESS',
-      message: 'OTP verification successful. Login complete.',
+      code: "LOGIN_OTP_SUCCESS",
+      message: "OTP verification successful. Login complete.",
       page: 1,
-      token,
+      accessToken,
+      refreshToken,
+      expiresIn,
       user: user.toJSON(),
     });
-
   } catch (err) {
     next(err);
   }
@@ -209,10 +234,10 @@ exports.loginWithOTP = async (req, res, next) => {
 
 /**
  * CHECK OTP REQUIREMENT - Check if user needs OTP verification
- * 
+ *
  * Request:
  * GET /api/auth/check-otp-requirement/:email
- * 
+ *
  * Response:
  * {
  *   "success": true,
@@ -227,14 +252,13 @@ exports.checkOTPRequirement = async (req, res, next) => {
     const otpRequired = await failedLoginTracker.isOTPRequired(email);
 
     return success(res, 200, {
-      code: 'OTP_CHECK_COMPLETE',
+      code: "OTP_CHECK_COMPLETE",
       requireOTP: otpRequired,
       page: otpRequired ? 2 : 1,
-      message: otpRequired 
-        ? 'OTP verification required' 
-        : 'Normal login available',
+      message: otpRequired
+        ? "OTP verification required"
+        : "Normal login available",
     });
-
   } catch (err) {
     next(err);
   }
@@ -242,7 +266,7 @@ exports.checkOTPRequirement = async (req, res, next) => {
 
 /**
  * SIGNUP - Create new user with password
- * 
+ *
  * Request:
  * POST /api/auth/signup
  * {
@@ -250,7 +274,7 @@ exports.checkOTPRequirement = async (req, res, next) => {
  *   "email": "john@example.com",
  *   "password": "SecurePassword123!"
  * }
- * 
+ *
  * Response (Success):
  * {
  *   "success": true,
@@ -265,49 +289,71 @@ exports.signup = async (req, res, next) => {
 
     // Validation
     if (!name || !email || !password) {
-      return fail(res, 400, 'AUTH_REQUIRED_FIELDS', 'name, email, and password are required', {
-        requiredFields: ['name', 'email', 'password'],
-      });
+      return fail(
+        res,
+        400,
+        "AUTH_REQUIRED_FIELDS",
+        "name, email, and password are required",
+        {
+          requiredFields: ["name", "email", "password"],
+        },
+      );
     }
 
     // Password strength validation
     if (password.length < 8) {
-      return fail(res, 400, 'WEAK_PASSWORD', 'Password must be at least 8 characters long', {
-        requirement: 'minimum 8 characters',
-      });
+      return fail(
+        res,
+        400,
+        "WEAK_PASSWORD",
+        "Password must be at least 8 characters long",
+        {
+          requirement: "minimum 8 characters",
+        },
+      );
     }
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return fail(res, 400, 'USER_EMAIL_ALREADY_EXISTS', 'Email already registered', {
-        field: 'email',
-      });
+      return fail(
+        res,
+        400,
+        "USER_EMAIL_ALREADY_EXISTS",
+        "Email already registered",
+        {
+          field: "email",
+        },
+      );
     }
 
     // Create new user
     const user = new User({ name, email, password });
     await user.save();
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
+    // Generate access and refresh tokens
+    const { accessToken, refreshToken, expiresIn } =
+      await tokenService.issueTokens(user._id.toString(), user.email);
 
     return success(res, 201, {
-      code: 'SIGNUP_SUCCESS',
-      message: 'Account created successfully',
-      token,
+      code: "SIGNUP_SUCCESS",
+      message: "Account created successfully",
+      accessToken,
+      refreshToken,
+      expiresIn,
       user: user.toJSON(),
     });
-
   } catch (err) {
     if (err.code === 11000) {
-      return fail(res, 400, 'USER_EMAIL_ALREADY_EXISTS', 'Email already registered', {
-        field: 'email',
-      });
+      return fail(
+        res,
+        400,
+        "USER_EMAIL_ALREADY_EXISTS",
+        "Email already registered",
+        {
+          field: "email",
+        },
+      );
     }
     next(err);
   }
@@ -315,18 +361,18 @@ exports.signup = async (req, res, next) => {
 
 /**
  * VERIFY TOKEN - Verify JWT token validity
- * 
+ *
  * Request:
  * GET /api/auth/verify
  * Headers: Authorization: Bearer <token>
- * 
+ *
  * Response (Valid):
  * {
  *   "success": true,
  *   "valid": true,
  *   "user": { id, email }
  * }
- * 
+ *
  * Response (Invalid):
  * {
  *   "success": false,
@@ -336,65 +382,143 @@ exports.signup = async (req, res, next) => {
  */
 exports.verifyToken = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const token = req.headers.authorization?.split(" ")[1];
 
     if (!token) {
-      return fail(res, 401, 'NO_TOKEN', 'No token provided', {
+      return fail(res, 401, "NO_TOKEN", "No token provided", {
         valid: false,
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "your-secret-key",
+    );
+
     return success(res, 200, {
-      code: 'TOKEN_VALID',
-      message: 'Token is valid',
+      code: "TOKEN_VALID",
+      message: "Token is valid",
       valid: true,
       user: {
         id: decoded.userId,
         email: decoded.email,
       },
     });
-
   } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return fail(res, 401, 'TOKEN_EXPIRED', 'Token has expired', {
+    if (err.name === "TokenExpiredError") {
+      return fail(res, 401, "TOKEN_EXPIRED", "Token has expired", {
         valid: false,
         expiredAt: err.expiredAt,
       });
     }
-    
-    return fail(res, 401, 'INVALID_TOKEN', 'Invalid token', {
+
+    return fail(res, 401, "INVALID_TOKEN", "Invalid token", {
       valid: false,
     });
   }
 };
 
 /**
- * LOGOUT - Clear OTP requirement and reset attempts
- * 
+ * REFRESH TOKEN - Get new access token using refresh token
+ *
+ * Request:
+ * POST /api/auth/refresh
+ * {
+ *   "refreshToken": "token-string",
+ *   "userId": "user-id"
+ * }
+ *
+ * Response (Success):
+ * {
+ *   "success": true,
+ *   "accessToken": "new-access-token",
+ *   "refreshToken": "new-refresh-token",
+ *   "expiresIn": 900
+ * }
+ *
+ * Response (Invalid Token):
+ * {
+ *   "success": false,
+ *   "code": "INVALID_REFRESH_TOKEN",
+ *   "message": "Refresh token is invalid or expired"
+ * }
+ */
+exports.refreshToken = async (req, res, next) => {
+  try {
+    const { refreshToken, userId } = req.body;
+
+    // Validation
+    if (!refreshToken || !userId) {
+      return fail(
+        res,
+        400,
+        "REFRESH_REQUIRED_FIELDS",
+        "refreshToken and userId are required",
+        {
+          requiredFields: ["refreshToken", "userId"],
+        },
+      );
+    }
+
+    // Attempt to refresh the access token
+    const tokens = await tokenService.refreshAccessToken(userId, refreshToken);
+
+    return success(res, 200, {
+      code: "TOKEN_REFRESH_SUCCESS",
+      message: "Access token refreshed successfully",
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.expiresIn,
+    });
+  } catch (err) {
+    // Security: Don't expose token details in error messages
+    if (
+      err.message.includes("expired") ||
+      err.message.includes("invalid") ||
+      err.message.includes("revoked")
+    ) {
+      return fail(
+        res,
+        401,
+        "INVALID_REFRESH_TOKEN",
+        "Refresh token is invalid or expired",
+      );
+    }
+    next(err);
+  }
+};
+
+/**
+ * LOGOUT - Clear OTP requirement and revoke refresh token
+ *
  * Request:
  * POST /api/auth/logout
  * {
- *   "email": "user@example.com"
+ *   "email": "user@example.com",
+ *   "userId": "user-id",
+ *   "refreshToken": "token-string"
  * }
  */
 exports.logout = async (req, res, next) => {
   try {
-    const { email } = req.body;
+    const { email, userId, refreshToken } = req.body;
 
     if (!email) {
-      return fail(res, 400, 'EMAIL_REQUIRED', 'email is required');
+      return fail(res, 400, "EMAIL_REQUIRED", "email is required");
     }
 
     // Clear OTP requirement
     await failedLoginTracker.clearOTPRequirement(email);
-    
-    return success(res, 200, {
-      code: 'LOGOUT_SUCCESS',
-      message: 'Logged out successfully',
-    });
 
+    // Revoke refresh token if provided
+    if (userId && refreshToken) {
+      await tokenService.revokeRefreshToken(userId, refreshToken);
+    }
+
+    return success(res, 200, {
+      code: "LOGOUT_SUCCESS",
+      message: "Logged out successfully",
+    });
   } catch (err) {
     next(err);
   }
