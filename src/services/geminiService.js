@@ -5,12 +5,10 @@ let model = null;
 let modelInitError = null;
 let successfulModel = null;
 
-// List of models to try in order of preference
-const MODELS_TO_TRY = [
-  "gemini-2.5-flash",
-];
+// Gemini 2.5 Flash model - optimized for backend with fast response times
+const MODEL_NAME = "gemini-2.5-flash";
 
-// Initialize Gemini API with proper error handling
+// Initialize Gemini API with proper error handling and system instruction
 function initializeGemini() {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -23,29 +21,37 @@ function initializeGemini() {
 
     genAI = new GoogleGenerativeAI(apiKey);
 
-    // Try each model in order
-    for (const modelName of MODELS_TO_TRY) {
-      try {
-        model = genAI.getGenerativeModel({ model: modelName });
-        successfulModel = modelName;
-        console.log(`✅ Gemini model initialized: ${modelName}`);
-        modelInitError = null;
-        return true;
-      } catch (error) {
-        console.warn(
-          `⚠️ Model ${modelName} not available:`,
-          error.message
-        );
-        continue;
-      }
-    }
+    // Initialize with Gemini 2.5 Flash and system instruction
+    model = genAI.getGenerativeModel({
+      model: MODEL_NAME,
+      // System instruction ensures consistent backend behavior
+      systemInstruction: `You are a backend utility for GNDEC Ludhiana student information system.
+Your task is to process user queries about GNDEC and return a valid JSON object.
+Do not include any conversational filler, markdown formatting (no \`\`\`json), or explanations.
 
-    // If we get here, no models worked
-    throw new Error(
-      `None of the supported models are available: ${MODELS_TO_TRY.join(
-        ", "
-      )}. Your API key may not have access to Gemini models or the quota may be exceeded.`
-    );
+Rules:
+- Answer ONLY questions related to GNDEC Ludhiana
+- Allowed topics: departments, hostels, campus navigation, faculty, timetable, admissions, events, facilities, placements, academic information
+- For unrelated questions, return appropriate error status
+- Output ONLY valid JSON, nothing else
+
+Schema to follow:
+{
+  "status": "success" | "error",
+  "data": {
+    "response": "your answer here",
+    "isGNDECRelated": true | false
+  },
+  "reasoning": "brief explanation of the response"
+}
+
+Strict Rule: If the input is invalid or unrelated to GNDEC, return status: "error" with appropriate data.`,
+    });
+
+    successfulModel = MODEL_NAME;
+    console.log(`✅ Gemini 2.5 Flash model initialized successfully`);
+    modelInitError = null;
+    return true;
   } catch (error) {
     modelInitError = error;
     console.error("❌ Gemini initialization failed:", error.message);
@@ -56,7 +62,14 @@ function initializeGemini() {
 // Initialize on module load
 initializeGemini();
 
-async function chat(message, systemPrompt) {
+/**
+ * Chat with Gemini 2.5 Flash
+ * Returns structured JSON response from the backend model
+ *
+ * @param {string} message - User query
+ * @returns {Promise<string>} - JSON string response from Gemini
+ */
+async function chat(message) {
   try {
     // Check if Gemini was properly initialized
     if (!model) {
@@ -72,21 +85,36 @@ async function chat(message, systemPrompt) {
       throw new Error("Message must be a non-empty string");
     }
 
-    const prompt = `${systemPrompt}\n\nUser: ${message}`;
-
-    const result = await model.generateContent(prompt);
+    // Use generateContent with the message directly
+    // System instruction is already set in the model initialization
+    const result = await model.generateContent(message);
 
     if (!result || !result.response) {
       throw new Error("No response received from Gemini API");
     }
 
-    const response = result.response.text();
+    const responseText = result.response.text();
 
-    if (!response) {
+    if (!responseText) {
       throw new Error("Empty response from Gemini API");
     }
 
-    return response;
+    // Attempt to parse and validate JSON response
+    try {
+      const jsonResponse = JSON.parse(responseText);
+      return JSON.stringify(jsonResponse);
+    } catch (parseError) {
+      // If response is not valid JSON, wrap it in a structured format
+      console.warn("Response was not valid JSON, wrapping it:", parseError.message);
+      return JSON.stringify({
+        status: "success",
+        data: {
+          response: responseText,
+          isGNDECRelated: true
+        },
+        reasoning: "Response parsed from non-JSON format"
+      });
+    }
   } catch (error) {
     console.error("Gemini API error:", {
       message: error.message,
@@ -95,22 +123,28 @@ async function chat(message, systemPrompt) {
       model: successfulModel,
     });
 
-    // Provide more helpful error messages
+    // Return structured error response
+    let errorMessage = "Failed to process request";
+
     if (error.status === 404) {
-      throw new Error(
-        `The Gemini model '${successfulModel}' is not available. This may indicate API quota exceeded or invalid API key.`
-      );
+      errorMessage = `The Gemini model '${successfulModel}' is not available. API quota may be exceeded or API key invalid.`;
     } else if (error.status === 401 || error.status === 403) {
-      throw new Error("Invalid Gemini API key or insufficient permissions");
+      errorMessage = "Invalid Gemini API key or insufficient permissions";
     } else if (error.status === 429) {
-      throw new Error(
-        "Rate limit exceeded. Please try again in a few moments."
-      );
+      errorMessage = "Rate limit exceeded. Please try again in a few moments.";
     } else if (error.message?.includes("API key not valid")) {
-      throw new Error("Invalid or expired Gemini API key");
+      errorMessage = "Invalid or expired Gemini API key";
     }
 
-    throw new Error(`Failed to generate AI response: ${error.message}`);
+    // Return JSON error response
+    return JSON.stringify({
+      status: "error",
+      data: {
+        response: errorMessage,
+        isGNDECRelated: false
+      },
+      reasoning: "Error occurred during AI processing"
+    });
   }
 }
 
