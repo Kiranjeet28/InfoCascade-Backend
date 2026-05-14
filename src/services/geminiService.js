@@ -2,150 +2,167 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 let genAI = null;
 let model = null;
-let modelInitError = null;
-let successfulModel = null;
 
-// Gemini 2.5 Flash model - optimized for backend with fast response times
-const MODEL_NAME = "gemini-2.5-flash";
+const MODEL_NAME = "gemini-1.5-flash";
 
-// Initialize Gemini API with proper error handling and system instruction
+// -----------------------------
+// Initialize Gemini
+// -----------------------------
 function initializeGemini() {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      throw new Error(
-        "GEMINI_API_KEY environment variable is not set. Please configure it in your .env file."
-      );
+      throw new Error("Missing GEMINI_API_KEY");
     }
 
     genAI = new GoogleGenerativeAI(apiKey);
 
-    // Initialize with Gemini 2.5 Flash and system instruction
     model = genAI.getGenerativeModel({
       model: MODEL_NAME,
-      // System instruction ensures consistent backend behavior
-      systemInstruction: `You are a backend utility for GNDEC Ludhiana student information system.
-Your task is to process user queries about GNDEC and return a valid JSON object.
-Do not include any conversational filler, markdown formatting (no \`\`\`json), or explanations.
+
+      systemInstruction: `
+You are an AI assistant for GNDEC Ludhiana only.
 
 Rules:
-- Answer ONLY questions related to GNDEC Ludhiana
-- Allowed topics: departments, hostels, campus navigation, faculty, timetable, admissions, events, facilities, placements, academic information
-- For unrelated questions, return appropriate error status
-- Output ONLY valid JSON, nothing else
+- Answer ONLY GNDEC related questions
+- Return ONLY valid JSON
+- No markdown
+- No extra explanation
 
-Schema to follow:
+JSON format:
 {
   "status": "success" | "error",
   "data": {
-    "response": "your answer here",
-    "isGNDECRelated": true | false
+    "response": "text",
+    "isGNDECRelated": true
   },
-  "reasoning": "brief explanation of the response"
+  "reasoning": "short reason"
 }
-
-Strict Rule: If the input is invalid or unrelated to GNDEC, return status: "error" with appropriate data.`,
+`,
     });
 
-    successfulModel = MODEL_NAME;
-    console.log(`✅ Gemini 2.5 Flash model initialized successfully`);
-    modelInitError = null;
-    return true;
+    console.log(`✅ Gemini initialized: ${MODEL_NAME}`);
+
   } catch (error) {
-    modelInitError = error;
-    console.error("❌ Gemini initialization failed:", error.message);
-    return false;
+    console.error("❌ Gemini init failed:", error.message);
   }
 }
 
-// Initialize on module load
 initializeGemini();
 
-/**
- * Chat with Gemini 2.5 Flash
- * Returns structured JSON response from the backend model
- *
- * @param {string} message - User query
- * @returns {Promise<string>} - JSON string response from Gemini
- */
+// -----------------------------
+// Timeout helper
+// -----------------------------
+function timeoutPromise(ms) {
+  return new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error("Gemini request timeout"));
+    }, ms);
+  });
+}
+
+// -----------------------------
+// Safe JSON parser
+// -----------------------------
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// -----------------------------
+// Chat function
+// -----------------------------
 async function chat(message) {
   try {
-    // Check if Gemini was properly initialized
     if (!model) {
-      if (modelInitError) {
-        throw new Error(
-          `Gemini AI is not properly configured: ${modelInitError.message}`
-        );
-      }
-      throw new Error("Gemini model is not initialized");
+      throw new Error("Gemini model not initialized");
     }
 
-    if (!message || typeof message !== "string") {
-      throw new Error("Message must be a non-empty string");
-    }
+    console.log("🤖 Gemini request started");
 
-    // Use generateContent with the message directly
-    // System instruction is already set in the model initialization
-    const result = await model.generateContent(message);
+    // Timeout protection
+    const result = await Promise.race([
+      model.generateContent(message),
+      timeoutPromise(20000), // 20 sec backend timeout
+    ]);
 
-    if (!result || !result.response) {
-      throw new Error("No response received from Gemini API");
-    }
+    console.log("✅ Gemini response received");
 
     const responseText = result.response.text();
 
     if (!responseText) {
-      throw new Error("Empty response from Gemini API");
+      throw new Error("Empty Gemini response");
     }
 
-    // Attempt to parse and validate JSON response
-    try {
-      const jsonResponse = JSON.parse(responseText);
-      return JSON.stringify(jsonResponse);
-    } catch (parseError) {
-      // If response is not valid JSON, wrap it in a structured format
-      console.warn("Response was not valid JSON, wrapping it:", parseError.message);
+    // Remove markdown if Gemini returns ```json
+    const cleaned = responseText
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    const parsed = safeJsonParse(cleaned);
+
+    // If invalid JSON, wrap safely
+    if (!parsed) {
       return JSON.stringify({
         status: "success",
         data: {
-          response: responseText,
-          isGNDECRelated: true
+          response: cleaned,
+          isGNDECRelated: true,
         },
-        reasoning: "Response parsed from non-JSON format"
+        reasoning: "Wrapped non-JSON response",
       });
     }
+
+    return JSON.stringify(parsed);
+
   } catch (error) {
-    console.error("Gemini API error:", {
-      message: error.message,
-      status: error.status,
-      code: error.code,
-      model: successfulModel,
-    });
+    console.error("❌ Gemini Error:", error.message);
 
-    // Return structured error response
-    let errorMessage = "Failed to process request";
-
-    if (error.status === 404) {
-      errorMessage = `The Gemini model '${successfulModel}' is not available. API quota may be exceeded or API key invalid.`;
-    } else if (error.status === 401 || error.status === 403) {
-      errorMessage = "Invalid Gemini API key or insufficient permissions";
-    } else if (error.status === 429) {
-      errorMessage = "Rate limit exceeded. Please try again in a few moments.";
-    } else if (error.message?.includes("API key not valid")) {
-      errorMessage = "Invalid or expired Gemini API key";
+    // Timeout fallback
+    if (error.message.includes("timeout")) {
+      return JSON.stringify({
+        status: "error",
+        data: {
+          response:
+            "Server is waking up. Please try again in a few seconds.",
+          isGNDECRelated: false,
+        },
+        reasoning: "Gemini timeout",
+      });
     }
 
-    // Return JSON error response
+    // Rate limit
+    if (error.status === 429) {
+      return JSON.stringify({
+        status: "error",
+        data: {
+          response:
+            "AI service is busy right now. Please try again shortly.",
+          isGNDECRelated: false,
+        },
+        reasoning: "Rate limit exceeded",
+      });
+    }
+
+    // Generic fallback
     return JSON.stringify({
       status: "error",
       data: {
-        response: errorMessage,
-        isGNDECRelated: false
+        response:
+          "AI service temporarily unavailable.",
+        isGNDECRelated: false,
       },
-      reasoning: "Error occurred during AI processing"
+      reasoning: error.message,
     });
   }
 }
 
-module.exports = { chat, initializeGemini, successfulModel: () => successfulModel };
+module.exports = {
+  chat,
+  initializeGemini,
+};
