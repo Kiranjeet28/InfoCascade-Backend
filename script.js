@@ -61,7 +61,7 @@ Example:
     // -----------------------------------
     // Test prompt
     // -----------------------------------
-    const prompt = "Tell me about GNDEC departments";
+    const prompt = "Tell me about GNDEC placement statistics.";
 
     console.log("\n📤 Sending prompt:");
     console.log(prompt);
