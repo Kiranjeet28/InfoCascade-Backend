@@ -1,90 +1,123 @@
 require("dotenv").config();
 
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const OpenAI = require("openai");
 
-const MODEL_NAME = "gemini-2.5-flash";
+// -----------------------------------
+// OPENROUTER CONFIG
+// -----------------------------------
+const client = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+});
 
-async function testGemini() {
+// -----------------------------------
+// MODEL
+// -----------------------------------
+const MODEL_NAME = "deepseek/deepseek-chat";
+
+// -----------------------------------
+// MAIN TEST FUNCTION
+// -----------------------------------
+async function testAI() {
   try {
-    console.log("🚀 Starting Gemini test...\n");
+    console.log("🚀 Starting OpenRouter AI test...\n");
 
     // -----------------------------------
-    // Check API key
+    // CHECK API KEY
     // -----------------------------------
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error("Missing GEMINI_API_KEY in .env");
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error(
+        "Missing OPENROUTER_API_KEY in .env"
+      );
     }
 
-    console.log("✅ API Key Found");
+    console.log("✅ OpenRouter API Key Found");
 
     // -----------------------------------
-    // Initialize Gemini
+    // TEST PROMPT
     // -----------------------------------
-    const genAI = new GoogleGenerativeAI(
-      process.env.GEMINI_API_KEY
-    );
-
-    console.log("✅ Gemini SDK initialized");
-
-    // -----------------------------------
-    // Create model
-    // -----------------------------------
-    const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-
-      generationConfig: {
-        temperature: 0.3,
-        topP: 0.8,
-        topK: 20,
-        maxOutputTokens: 256,
-      },
-
-      systemInstruction: `
-You are a GNDEC assistant.
-
-Respond ONLY in JSON format.
-
-Example:
-{
-  "status": "success",
-  "data": {
-    "response": "GNDEC has multiple departments.",
-    "isGNDECRelated": true
-  },
-  "reasoning": "GNDEC related query"
-}
-`,
-    });
-
-    console.log(`✅ Model initialized: ${MODEL_NAME}`);
-
-    // -----------------------------------
-    // Test prompt
-    // -----------------------------------
-    const prompt = "Tell me about GNDEC placement statistics.";
+    const prompt =
+      "Tell me about GNDEC placement statistics.";
 
     console.log("\n📤 Sending prompt:");
     console.log(prompt);
 
     // -----------------------------------
-    // Measure response time
+    // MEASURE RESPONSE TIME
     // -----------------------------------
-    console.time("\n⏱ Gemini Response Time");
-
-    const result = await model.generateContent(prompt);
-
-    console.timeEnd("\n⏱ Gemini Response Time");
+    console.time("\n⏱ AI Response Time");
 
     // -----------------------------------
-    // Extract response
+    // API REQUEST
     // -----------------------------------
-    const response = result.response.text();
+    const completion =
+      await client.chat.completions.create({
+        model: MODEL_NAME,
+
+        messages: [
+          {
+            role: "system",
+            content: `
+You are a GNDEC Ludhiana assistant.
+
+Rules:
+- Answer ONLY GNDEC related questions
+- Keep responses concise
+- Respond ONLY in valid JSON
+- Do not use markdown
+
+Format:
+{
+  "status": "success",
+  "data": {
+    "response": "your answer",
+    "isGNDECRelated": true
+  },
+  "reasoning": "short reason"
+}
+
+If unrelated:
+{
+  "status": "error",
+  "data": {
+    "response": "I can only assist with GNDEC Ludhiana related information.",
+    "isGNDECRelated": false
+  },
+  "reasoning": "Unrelated query"
+}
+`,
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+
+        temperature: 0.2,
+        max_tokens: 256,
+
+        response_format: {
+          type: "json_object",
+        },
+      });
+
+    console.timeEnd("\n⏱ AI Response Time");
+
+    // -----------------------------------
+    // EXTRACT RESPONSE
+    // -----------------------------------
+    const response =
+      completion.choices?.[0]?.message?.content;
 
     console.log("\n📦 RAW RESPONSE:\n");
     console.log(response);
 
+    if (!response) {
+      throw new Error("Empty AI response");
+    }
+
     // -----------------------------------
-    // Clean markdown
+    // CLEAN RESPONSE
     // -----------------------------------
     const cleaned = response
       .replace(/```json/g, "")
@@ -95,7 +128,7 @@ Example:
     console.log(cleaned);
 
     // -----------------------------------
-    // Parse JSON
+    // PARSE JSON
     // -----------------------------------
     try {
       const parsed = JSON.parse(cleaned);
@@ -113,7 +146,7 @@ Example:
     }
 
   } catch (error) {
-    console.error("\n❌ GEMINI TEST FAILED\n");
+    console.error("\n❌ OPENROUTER TEST FAILED\n");
 
     console.error({
       message: error.message,
@@ -124,4 +157,7 @@ Example:
   }
 }
 
-testGemini();
+// -----------------------------------
+// RUN TEST
+// -----------------------------------
+testAI();

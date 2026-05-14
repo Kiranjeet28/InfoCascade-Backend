@@ -1,83 +1,35 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const OpenAI = require("openai");
 
-let genAI = null;
-let model = null;
-
-// -----------------------------------
-// MODEL
-// -----------------------------------
-const MODEL_NAME = "gemini-2.5-flash";
+let client = null;
 
 // -----------------------------------
-// INITIALIZE GEMINI
+// INITIALIZE OPENROUTER
 // -----------------------------------
-function initializeGemini() {
+function initializeAI() {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY;
 
     if (!apiKey) {
-      throw new Error("Missing GEMINI_API_KEY");
+      throw new Error("Missing OPENROUTER_API_KEY");
     }
 
-    genAI = new GoogleGenerativeAI(apiKey);
-
-    model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-
-      generationConfig: {
-        temperature: 0.2,
-        topP: 0.8,
-        topK: 20,
-        maxOutputTokens: 256,
-
-        // VERY IMPORTANT
-        responseMimeType: "application/json",
-      },
-
-      systemInstruction: `
-You are a GNDEC Ludhiana assistant.
-
-Answer ONLY GNDEC Ludhiana related questions.
-
-Always respond with valid JSON only.
-
-Format:
-{
-  "status": "success",
-  "data": {
-    "response": "answer here",
-    "isGNDECRelated": true
-  },
-  "reasoning": "short reason"
-}
-
-If unrelated:
-{
-  "status": "error",
-  "data": {
-    "response": "I can only assist with GNDEC Ludhiana related information.",
-    "isGNDECRelated": false
-  },
-  "reasoning": "Unrelated query"
-}
-`,
+    client = new OpenAI({
+      apiKey,
+      baseURL: "https://openrouter.ai/api/v1",
     });
 
-    console.log("✅ Gemini initialized successfully");
-    console.log(`✅ Model: ${MODEL_NAME}`);
+    console.log("✅ OpenRouter initialized successfully");
 
   } catch (error) {
-    console.error("❌ Gemini initialization failed:", {
+    console.error("❌ OpenRouter initialization failed:", {
       message: error.message,
       stack: error.stack,
     });
   }
 }
 
-// -----------------------------------
-// INITIALIZE ON START
-// -----------------------------------
-initializeGemini();
+// Initialize immediately
+initializeAI();
 
 // -----------------------------------
 // TIMEOUT HELPER
@@ -85,7 +37,7 @@ initializeGemini();
 function timeoutPromise(ms) {
   return new Promise((_, reject) => {
     setTimeout(() => {
-      reject(new Error("Gemini request timeout"));
+      reject(new Error("AI request timeout"));
     }, ms);
   });
 }
@@ -102,8 +54,7 @@ function safeJsonParse(text) {
 }
 
 // -----------------------------------
-// SMALL DELAY HELPER
-// Prevents burst rate limits
+// DELAY HELPER
 // -----------------------------------
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -114,37 +65,97 @@ function delay(ms) {
 // -----------------------------------
 async function chat(message) {
   try {
-    if (!model) {
-      throw new Error("Gemini model not initialized");
+    if (!client) {
+      throw new Error("OpenRouter client not initialized");
     }
 
     if (!message || typeof message !== "string") {
       throw new Error("Invalid message");
     }
 
-    console.log("🤖 Gemini request started");
+    console.log("🤖 AI request started");
 
-    // Small delay for free-tier stability
-    await delay(1000);
+    // Prevent burst limits
+    await delay(500);
 
-    // Timeout protection
-    const result = await Promise.race([
-      model.generateContent(message),
-      timeoutPromise(20000), // 20 seconds
+    // -----------------------------------
+    // REQUEST
+    // -----------------------------------
+    const completion = await Promise.race([
+      client.chat.completions.create({
+        // BEST FREE MODEL
+        model: "deepseek/deepseek-chat",
+
+        messages: [
+          {
+            role: "system",
+            content: `
+You are a GNDEC Ludhiana assistant.
+
+Rules:
+- Answer ONLY GNDEC Ludhiana related questions
+- Keep responses concise
+- Be student-friendly
+- Reject unrelated questions
+
+Always respond in VALID JSON ONLY.
+
+Format:
+{
+  "status": "success",
+  "data": {
+    "response": "your response",
+    "isGNDECRelated": true
+  },
+  "reasoning": "short reason"
+}
+
+If unrelated:
+{
+  "status": "error",
+  "data": {
+    "response": "I can only assist with GNDEC Ludhiana related information.",
+    "isGNDECRelated": false
+  },
+  "reasoning": "Unrelated query"
+}
+`,
+          },
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+
+        temperature: 0.2,
+        max_tokens: 256,
+
+        response_format: {
+          type: "json_object",
+        },
+      }),
+
+      timeoutPromise(20000),
     ]);
 
-    console.log("✅ Gemini response received");
+    console.log("✅ AI response received");
 
-    const responseText = result.response.text();
+    // -----------------------------------
+    // EXTRACT RESPONSE
+    // -----------------------------------
+    const responseText =
+      completion.choices?.[0]?.message?.content;
 
-    console.log("📦 RAW GEMINI RESPONSE:");
+    console.log("📦 RAW RESPONSE:");
     console.log(responseText);
 
     if (!responseText) {
-      throw new Error("Empty Gemini response");
+      throw new Error("Empty AI response");
     }
 
-    // Clean markdown if Gemini adds it
+    // -----------------------------------
+    // CLEAN RESPONSE
+    // -----------------------------------
     const cleaned = responseText
       .replace(/```json/g, "")
       .replace(/```/g, "")
@@ -153,12 +164,13 @@ async function chat(message) {
     console.log("🧹 CLEANED RESPONSE:");
     console.log(cleaned);
 
-    // Parse JSON safely
+    // -----------------------------------
+    // PARSE JSON
+    // -----------------------------------
     const parsed = safeJsonParse(cleaned);
 
-    // If invalid JSON
     if (!parsed) {
-      console.warn("⚠️ Invalid JSON from Gemini");
+      console.warn("⚠️ Invalid JSON response");
 
       return JSON.stringify({
         status: "error",
@@ -167,14 +179,14 @@ async function chat(message) {
             "AI returned invalid response format.",
           isGNDECRelated: false,
         },
-        reasoning: "Invalid JSON returned by Gemini",
+        reasoning: "JSON parse failed",
       });
     }
 
     return JSON.stringify(parsed);
 
   } catch (error) {
-    console.error("❌ FULL GEMINI ERROR:", {
+    console.error("❌ FULL AI ERROR:", {
       message: error.message,
       status: error.status,
       code: error.code,
@@ -190,16 +202,15 @@ async function chat(message) {
             "Server is waking up. Please try again in a few seconds.",
           isGNDECRelated: false,
         },
-        reasoning: "Gemini timeout",
+        reasoning: "Timeout",
       });
     }
 
-    // Rate limit / quota
+    // Rate limit
     if (
       error.status === 429 ||
       error.message?.includes("429") ||
-      error.message?.includes("quota") ||
-      error.message?.includes("rate limit")
+      error.message?.includes("rate")
     ) {
       return JSON.stringify({
         status: "error",
@@ -212,19 +223,19 @@ async function chat(message) {
       });
     }
 
-    // Invalid API key
+    // Authentication
     if (
-      error.message?.includes("API key") ||
-      error.message?.includes("authentication")
+      error.message?.includes("auth") ||
+      error.message?.includes("API key")
     ) {
       return JSON.stringify({
         status: "error",
         data: {
           response:
-            "AI configuration error. Please contact administrator.",
+            "AI configuration error.",
           isGNDECRelated: false,
         },
-        reasoning: "Invalid API key",
+        reasoning: "Authentication failed",
       });
     }
 
@@ -236,12 +247,12 @@ async function chat(message) {
           "AI service temporarily unavailable.",
         isGNDECRelated: false,
       },
-      reasoning: error.message || "Unknown Gemini error",
+      reasoning: error.message || "Unknown error",
     });
   }
 }
 
 module.exports = {
   chat,
-  initializeGemini,
+  initializeAI,
 };
