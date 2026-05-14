@@ -3,10 +3,13 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 let genAI = null;
 let model = null;
 
-const MODEL_NAME = "gemini-1.5-flash";
+// -----------------------------------
+// MODEL
+// -----------------------------------
+const MODEL_NAME = "gemini-2.5-flash";
 
 // -----------------------------------
-// Initialize Gemini
+// INITIALIZE GEMINI
 // -----------------------------------
 function initializeGemini() {
   try {
@@ -22,33 +25,33 @@ function initializeGemini() {
       model: MODEL_NAME,
 
       generationConfig: {
-        temperature: 0.3,
+        temperature: 0.2,
         topP: 0.8,
         topK: 20,
-        maxOutputTokens: 512,
+        maxOutputTokens: 256,
+
+        // VERY IMPORTANT
+        responseMimeType: "application/json",
       },
 
       systemInstruction: `
-You are an AI assistant for GNDEC Ludhiana only.
+You are a GNDEC Ludhiana assistant.
 
-Rules:
-- Answer ONLY GNDEC Ludhiana related questions
-- Keep responses concise and student-friendly
-- Do NOT answer unrelated questions
-- Respond in VALID JSON format only
-- Do NOT use markdown formatting
+Answer ONLY GNDEC Ludhiana related questions.
 
-JSON FORMAT:
+Always respond with valid JSON only.
+
+Format:
 {
-  "status": "success" | "error",
+  "status": "success",
   "data": {
-    "response": "your response",
-    "isGNDECRelated": true | false
+    "response": "answer here",
+    "isGNDECRelated": true
   },
-  "reasoning": "short explanation"
+  "reasoning": "short reason"
 }
 
-If the query is unrelated to GNDEC, return:
+If unrelated:
 {
   "status": "error",
   "data": {
@@ -60,7 +63,7 @@ If the query is unrelated to GNDEC, return:
 `,
     });
 
-    console.log(`✅ Gemini initialized successfully`);
+    console.log("✅ Gemini initialized successfully");
     console.log(`✅ Model: ${MODEL_NAME}`);
 
   } catch (error) {
@@ -71,11 +74,13 @@ If the query is unrelated to GNDEC, return:
   }
 }
 
-// Initialize immediately
+// -----------------------------------
+// INITIALIZE ON START
+// -----------------------------------
 initializeGemini();
 
 // -----------------------------------
-// Timeout helper
+// TIMEOUT HELPER
 // -----------------------------------
 function timeoutPromise(ms) {
   return new Promise((_, reject) => {
@@ -86,7 +91,7 @@ function timeoutPromise(ms) {
 }
 
 // -----------------------------------
-// Safe JSON parser
+// SAFE JSON PARSER
 // -----------------------------------
 function safeJsonParse(text) {
   try {
@@ -97,14 +102,15 @@ function safeJsonParse(text) {
 }
 
 // -----------------------------------
-// Delay helper (reduces rate limit)
+// SMALL DELAY HELPER
+// Prevents burst rate limits
 // -----------------------------------
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // -----------------------------------
-// Main Chat Function
+// MAIN CHAT FUNCTION
 // -----------------------------------
 async function chat(message) {
   try {
@@ -118,45 +124,50 @@ async function chat(message) {
 
     console.log("🤖 Gemini request started");
 
-    // Small delay helps prevent burst rate limits
+    // Small delay for free-tier stability
     await delay(1000);
 
-    // Run with timeout protection
+    // Timeout protection
     const result = await Promise.race([
       model.generateContent(message),
-      timeoutPromise(20000), // 20 sec backend timeout
+      timeoutPromise(20000), // 20 seconds
     ]);
 
     console.log("✅ Gemini response received");
 
     const responseText = result.response.text();
 
-    console.log("📦 RAW GEMINI RESPONSE:", responseText);
+    console.log("📦 RAW GEMINI RESPONSE:");
+    console.log(responseText);
 
     if (!responseText) {
       throw new Error("Empty Gemini response");
     }
 
-    // Remove markdown formatting if Gemini adds it
+    // Clean markdown if Gemini adds it
     const cleaned = responseText
       .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
 
+    console.log("🧹 CLEANED RESPONSE:");
+    console.log(cleaned);
+
     // Parse JSON safely
     const parsed = safeJsonParse(cleaned);
 
-    // If invalid JSON, wrap response safely
+    // If invalid JSON
     if (!parsed) {
-      console.warn("⚠️ Gemini returned non-JSON response");
+      console.warn("⚠️ Invalid JSON from Gemini");
 
       return JSON.stringify({
-        status: "success",
+        status: "error",
         data: {
-          response: cleaned,
-          isGNDECRelated: true,
+          response:
+            "AI returned invalid response format.",
+          isGNDECRelated: false,
         },
-        reasoning: "Wrapped non-JSON response",
+        reasoning: "Invalid JSON returned by Gemini",
       });
     }
 
