@@ -1,64 +1,16 @@
+require("dotenv").config();
+
 const OpenAI = require("openai");
 
+// -----------------------------------
+// GLOBAL CLIENT
+// -----------------------------------
 let client = null;
 
 // -----------------------------------
-// INITIALIZE GROQ
+// MODEL
 // -----------------------------------
-function initializeAI() {
-  try {
-    const apiKey = process.env.GROQ_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("Missing GROQ_API_KEY");
-    }
-
-    client = new OpenAI({
-      apiKey,
-      baseURL: "https://api.groq.com/openai/v1",
-    });
-
-    console.log("✅ Groq initialized successfully");
-
-  } catch (error) {
-    console.error("❌ Groq initialization failed:", {
-      message: error.message,
-      stack: error.stack,
-    });
-  }
-}
-
-// Initialize immediately
-initializeAI();
-
-// -----------------------------------
-// TIMEOUT HELPER
-// -----------------------------------
-function timeoutPromise(ms) {
-  return new Promise((_, reject) => {
-    setTimeout(() => {
-      reject(new Error("AI request timeout"));
-    }, ms);
-  });
-}
-
-// -----------------------------------
-// SAFE JSON PARSER
-// -----------------------------------
-function safeJsonParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-// -----------------------------------
-// DELAY HELPER
-// -----------------------------------
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const MODEL_NAME = "llama-3.1-8b-instant";
 
 // -----------------------------------
 // SYSTEM PROMPT
@@ -96,29 +48,103 @@ If unrelated:
 `;
 
 // -----------------------------------
+// INITIALIZE GROQ
+// -----------------------------------
+function initializeAI() {
+  try {
+    const apiKey = process.env.GROQ_API_KEY;
+
+    console.log(
+      "🔑 GROQ KEY EXISTS:",
+      !!apiKey
+    );
+
+    if (!apiKey) {
+      throw new Error("Missing GROQ_API_KEY");
+    }
+
+    client = new OpenAI({
+      apiKey: apiKey,
+      baseURL: "https://api.groq.com/openai/v1",
+    });
+
+    console.log("✅ Groq initialized successfully");
+    console.log(`✅ Model: ${MODEL_NAME}`);
+
+  } catch (error) {
+    console.error("❌ Groq initialization failed:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    client = null;
+  }
+}
+
+// -----------------------------------
+// INITIALIZE ON START
+// -----------------------------------
+initializeAI();
+
+// -----------------------------------
+// TIMEOUT HELPER
+// -----------------------------------
+function timeoutPromise(ms) {
+  return new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error("AI request timeout"));
+    }, ms);
+  });
+}
+
+// -----------------------------------
+// SAFE JSON PARSER
+// -----------------------------------
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// -----------------------------------
+// DELAY HELPER
+// -----------------------------------
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// -----------------------------------
 // MAIN CHAT FUNCTION
 // -----------------------------------
 async function chat(message) {
   try {
+    // -----------------------------------
+    // VALIDATE CLIENT
+    // -----------------------------------
     if (!client) {
       throw new Error("Groq client not initialized");
     }
 
+    // -----------------------------------
+    // VALIDATE MESSAGE
+    // -----------------------------------
     if (!message || typeof message !== "string") {
       throw new Error("Invalid message");
     }
 
     console.log("🤖 AI request started");
 
+    // Prevent burst rate limits
     await delay(300);
 
     // -----------------------------------
-    // REQUEST
+    // AI REQUEST
     // -----------------------------------
     const completion = await Promise.race([
       client.chat.completions.create({
-        // FAST + FREE + VERY GOOD
-        model: "llama-3.1-8b-instant",
+        model: MODEL_NAME,
 
         messages: [
           {
@@ -148,7 +174,7 @@ async function chat(message) {
     // EXTRACT RESPONSE
     // -----------------------------------
     const responseText =
-      completion.choices?.[0]?.message?.content;
+      completion?.choices?.[0]?.message?.content;
 
     console.log("📦 RAW RESPONSE:");
     console.log(responseText);
@@ -187,6 +213,9 @@ async function chat(message) {
       });
     }
 
+    // -----------------------------------
+    // RETURN VALID RESPONSE
+    // -----------------------------------
     return JSON.stringify(parsed);
 
   } catch (error) {
@@ -197,8 +226,12 @@ async function chat(message) {
       stack: error.stack,
     });
 
-    // Timeout
-    if (error.message?.includes("timeout")) {
+    // -----------------------------------
+    // TIMEOUT ERROR
+    // -----------------------------------
+    if (
+      error.message?.includes("timeout")
+    ) {
       return JSON.stringify({
         status: "error",
         data: {
@@ -210,7 +243,9 @@ async function chat(message) {
       });
     }
 
-    // Rate limit
+    // -----------------------------------
+    // RATE LIMIT ERROR
+    // -----------------------------------
     if (
       error.status === 429 ||
       error.message?.includes("429") ||
@@ -227,10 +262,13 @@ async function chat(message) {
       });
     }
 
-    // Auth
+    // -----------------------------------
+    // AUTH ERROR
+    // -----------------------------------
     if (
       error.message?.includes("auth") ||
-      error.message?.includes("API key")
+      error.message?.includes("API key") ||
+      error.message?.includes("Unauthorized")
     ) {
       return JSON.stringify({
         status: "error",
@@ -243,7 +281,26 @@ async function chat(message) {
       });
     }
 
-    // Generic fallback
+    // -----------------------------------
+    // CLIENT NOT INITIALIZED
+    // -----------------------------------
+    if (
+      error.message?.includes("not initialized")
+    ) {
+      return JSON.stringify({
+        status: "error",
+        data: {
+          response:
+            "AI service configuration missing.",
+          isGNDECRelated: false,
+        },
+        reasoning: "Groq client not initialized",
+      });
+    }
+
+    // -----------------------------------
+    // GENERIC FALLBACK
+    // -----------------------------------
     return JSON.stringify({
       status: "error",
       data: {
@@ -251,11 +308,15 @@ async function chat(message) {
           "AI service temporarily unavailable.",
         isGNDECRelated: false,
       },
-      reasoning: error.message || "Unknown error",
+      reasoning:
+        error.message || "Unknown error",
     });
   }
 }
 
+// -----------------------------------
+// EXPORTS
+// -----------------------------------
 module.exports = {
   chat,
   initializeAI,
