@@ -3,25 +3,25 @@ const OpenAI = require("openai");
 let client = null;
 
 // -----------------------------------
-// INITIALIZE OPENROUTER
+// INITIALIZE GROQ
 // -----------------------------------
 function initializeAI() {
   try {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
-      throw new Error("Missing OPENROUTER_API_KEY");
+      throw new Error("Missing GROQ_API_KEY");
     }
 
     client = new OpenAI({
       apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
+      baseURL: "https://api.groq.com/openai/v1",
     });
 
-    console.log("✅ OpenRouter initialized successfully");
+    console.log("✅ Groq initialized successfully");
 
   } catch (error) {
-    console.error("❌ OpenRouter initialization failed:", {
+    console.error("❌ Groq initialization failed:", {
       message: error.message,
       stack: error.stack,
     });
@@ -61,35 +61,9 @@ function delay(ms) {
 }
 
 // -----------------------------------
-// MAIN CHAT FUNCTION
+// SYSTEM PROMPT
 // -----------------------------------
-async function chat(message) {
-  try {
-    if (!client) {
-      throw new Error("OpenRouter client not initialized");
-    }
-
-    if (!message || typeof message !== "string") {
-      throw new Error("Invalid message");
-    }
-
-    console.log("🤖 AI request started");
-
-    // Prevent burst limits
-    await delay(500);
-
-    // -----------------------------------
-    // REQUEST
-    // -----------------------------------
-    const completion = await Promise.race([
-      client.chat.completions.create({
-        // BEST FREE MODEL
-        model: "deepseek/deepseek-chat",
-
-        messages: [
-          {
-            role: "system",
-            content: `
+const SYSTEM_PROMPT = `
 You are a GNDEC Ludhiana assistant.
 
 Rules:
@@ -119,7 +93,37 @@ If unrelated:
   },
   "reasoning": "Unrelated query"
 }
-`,
+`;
+
+// -----------------------------------
+// MAIN CHAT FUNCTION
+// -----------------------------------
+async function chat(message) {
+  try {
+    if (!client) {
+      throw new Error("Groq client not initialized");
+    }
+
+    if (!message || typeof message !== "string") {
+      throw new Error("Invalid message");
+    }
+
+    console.log("🤖 AI request started");
+
+    await delay(300);
+
+    // -----------------------------------
+    // REQUEST
+    // -----------------------------------
+    const completion = await Promise.race([
+      client.chat.completions.create({
+        // FAST + FREE + VERY GOOD
+        model: "llama-3.1-8b-instant",
+
+        messages: [
+          {
+            role: "system",
+            content: SYSTEM_PROMPT,
           },
           {
             role: "user",
@@ -135,7 +139,7 @@ If unrelated:
         },
       }),
 
-      timeoutPromise(20000),
+      timeoutPromise(15000),
     ]);
 
     console.log("✅ AI response received");
@@ -223,7 +227,7 @@ If unrelated:
       });
     }
 
-    // Authentication
+    // Auth
     if (
       error.message?.includes("auth") ||
       error.message?.includes("API key")
